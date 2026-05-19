@@ -1,0 +1,25 @@
+namespace Generated.{{ .Project.Name | pascalcase }}.Application.Security;
+
+public static class PermissionPolicies
+{
+{{- range .Project.Entities }}
+{{- if .Permissions }}
+    public static class {{ .Name | pascalcase }}Permissions
+    {
+{{- if .Permissions.Read }}
+        public static readonly string[] Read = new[] { {{- range $i, $role := .Permissions.Read }}{{ if $i }}, {{ end }}"{{ $role }}"{{- end }} };
+{{- end }}
+{{- if .Permissions.Create }}
+        public static readonly string[] Create = new[] { {{- range $i, $role := .Permissions.Create }}{{ if $i }}, {{ end }}"{{ $role }}"{{- end }} };
+{{- end }}
+{{- if .Permissions.Update }}
+        public static readonly string[] Update = new[] { {{- range $i, $role := .Permissions.Update }}{{ if $i }}, {{ end }}"{{ $role }}"{{- end }} };
+{{- end }}
+{{- if .Permissions.Delete }}
+        public static readonly string[] Delete = new[] { {{- range $i, $role := .Permissions.Delete }}{{ if $i }}, {{ end }}"{{ $role }}"{{- end }} };
+{{- end }}
+    }
+
+{{- end }}
+{{- end }}
+}

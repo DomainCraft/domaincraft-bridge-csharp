@@ -1,0 +1,21 @@
+using Microsoft.EntityFrameworkCore;
+using Generated.{{ .Project.Name | pascalcase }}.Domain.Entities;
+
+namespace Generated.{{ .Project.Name | pascalcase }}.Infrastructure.Persistence;
+
+public class DomainDbContext : DbContext
+{
+    public DomainDbContext(DbContextOptions<DomainDbContext> options) : base(options)
+    {
+    }
+
+{{- range .Project.Entities }}
+    public DbSet<{{ .Name }}> {{ .NamePlural }} { get; set; } = default!;
+{{- end }}
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        base.OnModelCreating(modelBuilder);
+        modelBuilder.ApplyConfigurationsFromAssembly(typeof(DomainDbContext).Assembly);
+    }
+}

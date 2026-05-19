@@ -1,0 +1,32 @@
+using System;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Infrastructure.DependencyInjection;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Register generated domain services (repositories, permission/owner services, seeder)
+builder.Services.AddGeneratedDomainServices();
+
+// Add other application services here
+// builder.Services.AddControllers();
+
+var app = builder.Build();
+
+// Configure middleware, endpoints, etc.
+// app.UseRouting();
+// app.MapControllers();
+
+// Optionally run seeder on startup
+using (var scope = app.Services.CreateScope())
+{
+    var seeder = scope.ServiceProvider.GetService<DomainSeeder>();
+    if (seeder != null)
+    {
+        // Consider awaiting this in async host startup in real apps
+        seeder.SeedAsync().GetAwaiter().GetResult();
+    }
+}
+
+app.Run();

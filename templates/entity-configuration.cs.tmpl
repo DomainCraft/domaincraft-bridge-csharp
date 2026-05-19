@@ -1,0 +1,46 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Generated.{{ .Project.Name | pascalcase }}.Domain.Entities;
+
+namespace Generated.{{ .Project.Name | pascalcase }}.Infrastructure.Persistence.Configurations;
+
+public class {{ .Entity.Name }}Configuration : IEntityTypeConfiguration<{{ .Entity.Name }}>
+{
+    public void Configure(EntityTypeBuilder<{{ .Entity.Name }}> builder)
+    {
+        builder.ToTable("{{ .Entity.NamePlural }}");
+
+{{- range .Entity.Fields }}
+{{- if .IsPrimary }}
+        builder.HasKey(e => e.{{ .Name | pascalcase }});
+{{- end }}
+{{- end }}
+
+{{- range .Entity.Indexes }}
+        builder.HasIndex(e => new { {{- range $i, $field := .Fields }}{{ if $i }}, {{ end }}e.{{ $field | pascalcase }}{{- end }} }){{ if .Unique }}.IsUnique(){{ end }};
+{{- end }}
+
+{{- range .Entity.Fields }}
+{{- if and (not .IsRelation) (eq .DatabaseType "string") (.HasValidation "max") }}
+        builder.Property(e => e.{{ .Name | pascalcase }}).HasMaxLength({{ .ValidationValue "max" }});
+{{- end }}
+{{- end }}
+
+{{- range .Entity.RelationsOut }}
+{{- if .IsMany }}
+        builder.HasMany(e => e.{{ .FieldName | pascalcase }})
+            .WithMany(e => e.{{ .InverseNavName }});
+{{- else if eq .RelationType "one-to-one" }}
+        builder.HasOne(e => e.{{ .NavigationName }})
+            .WithOne()
+            .HasForeignKey<{{ $.Entity.Name }}>(e => e.{{ .FieldName | pascalcase }})
+            .OnDelete(DeleteBehavior.{{ deleteBehaviorName .OnDeleteBehavior }});
+{{- else }}
+        builder.HasOne(e => e.{{ .NavigationName }})
+            .WithMany(e => e.{{ .InverseNavName }})
+            .HasForeignKey(e => e.{{ .FieldName | pascalcase }})
+            .OnDelete(DeleteBehavior.{{ deleteBehaviorName .OnDeleteBehavior }});
+{{- end }}
+{{- end }}
+    }
+}

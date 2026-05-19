@@ -1,0 +1,38 @@
+using System;
+using System.Linq;
+using System.Security.Claims;
+using System.Reflection;
+
+namespace Application.Security;
+
+/// <summary>
+/// Basic owner resolver that inspects common owner property names (OwnerId, AuthorId, UserId)
+/// via reflection and compares them to the current principal's NameIdentifier claim.
+/// Bridges may replace this with more advanced logic.
+/// </summary>
+public class OwnerResolver : IOwnerResolver
+{
+    private static readonly string[] OwnerPropertyNames = new[] { "OwnerId", "AuthorId", "UserId", "CreatedBy" };
+
+    public bool IsOwner(ClaimsPrincipal user, object entity)
+    {
+        if (user == null || entity == null) return false;
+
+        var idClaim = user.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? user.FindFirst("sub")?.Value;
+        if (string.IsNullOrWhiteSpace(idClaim)) return false;
+
+        foreach (var propName in OwnerPropertyNames)
+        {
+            var prop = entity.GetType().GetProperty(propName, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+            if (prop == null) continue;
+
+            var val = prop.GetValue(entity);
+            if (val == null) continue;
+
+            if (val is Guid g && Guid.TryParse(idClaim, out var parsed) && g == parsed) return true;
+            if (val is string s && string.Equals(s, idClaim, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+
+        return false;
+    }
+}

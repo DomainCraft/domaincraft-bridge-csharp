@@ -1,0 +1,86 @@
+using System;
+using System.IO;
+using System.Text.Json;
+using System.Threading.Tasks;
+using Domain.Entities;
+
+namespace Infrastructure.Persistence.Seeders;
+
+/// <summary>
+/// Domain seeder that applies seed data from JSON files into the database.
+/// </summary>
+public class DomainSeeder
+{
+    private readonly DomainDbContext _context;
+    private readonly string _seedsDirectory;
+
+    public DomainSeeder(DomainDbContext context, string seedsDirectory = "./src/Infrastructure/Seed")
+    {
+        _context = context ?? throw new ArgumentNullException(nameof(context));
+        _seedsDirectory = seedsDirectory;
+    }
+
+    /// <summary>
+    /// Seed the database with data from JSON files.
+    /// </summary>
+    public async Task SeedAsync()
+    {
+        Console.WriteLine("Starting database seeding...");
+
+{{- range .Project.Entities }}
+{{- if .Seed }}
+        await Seed{{ .Name }}Async();
+{{- end }}
+{{- end }}
+
+        Console.WriteLine("Database seeding completed.");
+    }
+
+{{- range .Project.Entities }}
+{{- if .Seed }}
+
+    private async Task Seed{{ .Name }}Async()
+    {
+        var seedFile = Path.Combine(_seedsDirectory, "{{ .Name }}.seed.json");
+        
+        if (!File.Exists(seedFile))
+        {
+            Console.WriteLine("Seed file not found: {0}", seedFile);
+            return;
+        }
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(seedFile);
+            if (string.IsNullOrWhiteSpace(json) || json.Trim() == "[]")
+            {
+                Console.WriteLine("{{ .Name }}.seed.json is empty, skipping.");
+                return;
+            }
+
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var items = JsonSerializer.Deserialize<{{ .Name }}[]>(json, options);
+
+            if (items == null || items.Length == 0)
+                return;
+
+            foreach (var item in items)
+            {
+                if (!await _context.{{ .Name | pluralize }}.AnyAsync(x => x.Id == item.Id))
+                {
+                    _context.{{ .Name | pluralize }}.Add(item);
+                }
+            }
+
+            await _context.SaveChangesAsync();
+            Console.WriteLine("{{ .Name }} seeding completed ({0} items).", items.Length);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Error seeding {{ .Name }}: {0}", ex.Message);
+            throw;
+        }
+    }
+{{- end }}
+{{- end }}
+}

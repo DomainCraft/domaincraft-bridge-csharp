@@ -1,0 +1,18 @@
+# {{ .Entity.Name }}
+
+Plural: {{ .Entity.NamePlural }}
+
+## Fields
+{{- range .Entity.Fields }}
+- {{ .Name }}: {{ .DatabaseType }}{{ if .IsNullable }} (nullable){{ end }}{{ if .IsPrimary }} [primary]{{ end }}{{ if .IsHidden }} [hidden]{{ end }}
+{{- end }}
+
+## Relations Out
+{{- range .Entity.RelationsOut }}
+- {{ .FieldName }} -> {{ .TargetEntity.Name }} via {{ .NavigationName }} ({{ .RelationType }})
+{{- end }}
+
+## Relations In
+{{- range .Entity.RelationsIn }}
+- {{ .TargetEntity.Name }} -> {{ .InverseNavName }} ({{ .RelationType }})
+{{- end }}

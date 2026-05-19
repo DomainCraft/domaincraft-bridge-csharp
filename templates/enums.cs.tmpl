@@ -1,0 +1,14 @@
+using System.Runtime.Serialization;
+
+namespace Generated.{{ .Project.Name | pascalcase }}.Domain.Shared;
+
+{{- range $enumName, $enumValues := .Project.Enums }}
+public enum {{ $enumName | pascalcase }}
+{
+{{- range $enumValue := $enumValues }}
+    [EnumMember(Value = "{{ $enumValue }}")]
+    {{ $enumValue | pascalcase }},
+{{- end }}
+}
+
+{{- end }}

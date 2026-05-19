@@ -1,0 +1,16 @@
+# Generated Domain Summary
+
+Project: {{ .Project.Name }}
+Database: {{ .Project.Database }}
+API Style: {{ .Project.APIStyle }}
+Entities: {{ len .Project.Entities }}
+
+## Entity List
+{{- range .Project.Entities }}
+- {{ .Name }} ({{ .NamePlural }})
+{{- end }}
+
+## Enums
+{{- range $name, $values := .Project.Enums }}
+- {{ $name }}: {{ join ", " $values }}
+{{- end }}

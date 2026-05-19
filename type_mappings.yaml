@@ -1,0 +1,13 @@
+types:
+  string: string
+  int: int
+  int64: long
+  float64: double
+  bool: bool
+  time.Time: DateTime
+
+behaviors:
+  cascade: Cascade
+  set_null: SetNull
+  restrict: Restrict
+  no_action: NoAction

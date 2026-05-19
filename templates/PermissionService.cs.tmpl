@@ -1,0 +1,90 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Security.Claims;
+
+namespace Application.Security;
+
+/// <summary>
+/// Basic implementation of <see cref="IPermissionService"/> that reads roles from
+/// the current <see cref="ClaimsPrincipal"/>. Bridges are free to replace this
+/// with an application-specific implementation (e.g. checking tenant, group memberships,
+/// ownership rules, external policy stores, etc.).
+/// </summary>
+public class PermissionService : IPermissionService
+{
+    private readonly ClaimsPrincipal _user;
+    private readonly Func<Guid?> _currentUserIdResolver; // optional resolver for owner checks
+    private readonly IOwnerResolver? _ownerResolver;
+
+    public PermissionService(ClaimsPrincipal user, IOwnerResolver? ownerResolver = null, Func<Guid?>? currentUserIdResolver = null)
+    {
+        _user = user ?? throw new ArgumentNullException(nameof(user));
+        _ownerResolver = ownerResolver;
+        _currentUserIdResolver = currentUserIdResolver ?? (() => null);
+    }
+
+    public bool HasAnyRole(IEnumerable<string> roles)
+    {
+        if (roles == null) return false;
+
+        // If policies include "*" then treat as public/readable by any authenticated user
+        if (roles.Contains("*"))
+        {
+            return _user?.Identity?.IsAuthenticated ?? false;
+        }
+
+        var userRoles = _user?.Claims
+            .Where(c => c.Type == ClaimTypes.Role || c.Type == "role")
+            .Select(c => c.Value)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Direct role match
+        foreach (var role in roles)
+        {
+            if (string.Equals(role, "@Owner", StringComparison.OrdinalIgnoreCase))
+            {
+                // Caller can provide ownership-aware checks by implementing custom permission service
+                // Default behavior: deny @Owner unless explicitly implemented
+                continue;
+            }
+
+            if (userRoles.Contains(role)) return true;
+        }
+
+        return false;
+    }
+
+    public bool IsInRole(string role)
+    {
+        if (string.IsNullOrWhiteSpace(role)) return false;
+        return _user?.IsInRole(role) ?? false;
+    }
+
+    public bool IsOwner(object entity)
+    {
+        if (entity == null) return false;
+        if (_ownerResolver != null)
+        {
+            return _ownerResolver.IsOwner(_user, entity);
+        }
+
+        // Fallback: basic check based on NameIdentifier claim and common owner property names
+        var idClaim = _user.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? _user.FindFirst("sub")?.Value;
+        if (string.IsNullOrWhiteSpace(idClaim)) return false;
+
+        var ownerPropertyNames = new[] { "OwnerId", "AuthorId", "UserId", "CreatedBy" };
+        var t = entity.GetType();
+        foreach (var propName in ownerPropertyNames)
+        {
+            var prop = t.GetProperty(propName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.IgnoreCase);
+            if (prop == null) continue;
+            var val = prop.GetValue(entity);
+            if (val == null) continue;
+            if (val is Guid g && Guid.TryParse(idClaim, out var parsed) && g == parsed) return true;
+            if (val is string s && string.Equals(s, idClaim, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+
+        return false;
+    }
+}

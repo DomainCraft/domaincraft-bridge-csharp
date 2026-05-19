@@ -1,0 +1,60 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
+
+namespace Generated.{{ .Project.Name | pascalcase }}.Domain.Entities;
+
+public class {{ .Entity.Name }}
+{
+{{- range .Entity.Fields }}
+{{- if .IsHidden }}
+    [JsonIgnore]
+{{- end }}
+{{- if and (not .IsNullable) (not .IsMany) }}
+    [Required]
+{{- end }}
+{{- if .IsPrimary }}
+    [Key]
+{{- end }}
+{{- if and (not .IsRelation) (eq .DatabaseType "string") (.HasValidation "email") }}
+    [EmailAddress]
+{{- end }}
+{{- if and (not .IsRelation) (.HasValidation "url") }}
+    [Url]
+{{- end }}
+{{- if and (not .IsRelation) (.HasValidation "regex") }}
+    [RegularExpression("{{ .ValidationValue "regex" }}")]
+{{- end }}
+{{- if and (not .IsRelation) (or (.HasValidation "min") (.HasValidation "max")) }}
+    [StringLength({{ if .HasValidation "max" }}{{ .ValidationValue "max" }}{{ else }}int.MaxValue{{ end }}, MinimumLength = {{ if .HasValidation "min" }}{{ .ValidationValue "min" }}{{ else }}0{{ end }})]
+{{- end }}
+{{- if and (not .IsRelation) (and (.HasValidation "gte") (.HasValidation "lte")) }}
+    [Range({{ .ValidationValue "gte" }}, {{ .ValidationValue "lte" }})]
+{{- else if and (not .IsRelation) (.HasValidation "gte") }}
+    [Range({{ .ValidationValue "gte" }}, double.MaxValue)]
+{{- else if and (not .IsRelation) (.HasValidation "gt") }}
+    [Range({{ .ValidationValue "gt" }}, double.MaxValue)]
+{{- end }}
+{{- if .IsRelation }}
+{{- if .IsMany }}
+    public ICollection<{{ .RelationTarget }}> {{ .Name | pascalcase }} { get; set; } = new List<{{ .RelationTarget }}>();
+{{- else }}
+    public {{ csharpType .DatabaseType .IsNullable }} {{ .Name | pascalcase }} { get; set; }{{ if .IsNullable }}{{ else }} = default!;{{ end }}
+{{- end }}
+{{- else }}
+    public {{ csharpType .DatabaseType .IsNullable }} {{ .Name | pascalcase }} { get; set; }{{ if .IsNullable }}{{ else }} = default!;{{ end }}
+{{- end }}
+
+{{- end }}
+
+{{- range .Entity.RelationsOut }}
+{{- if not .IsMany }}
+    public {{ .TargetEntity.Name }}? {{ .NavigationName }} { get; set; }
+{{- end }}
+{{- end }}
+
+{{- range .Entity.RelationsIn }}
+    public ICollection<{{ .TargetEntity.Name }}> {{ .InverseNavName }} { get; set; } = new List<{{ .TargetEntity.Name }}>();
+{{- end }}
+}

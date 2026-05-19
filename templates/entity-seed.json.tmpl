@@ -1,0 +1,10 @@
+{{- if .Entity.Seed }}
+[
+{{- range $index, $row := .Entity.Seed }}
+  {{- if $index }},{{ end }}
+  {{ toJson $row }}
+{{- end }}
+]
+{{- else }}
+[]
+{{- end }}

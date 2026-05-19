@@ -1,0 +1,69 @@
+name: csharp
+description: Full-featured C# bridge for DomainCraft
+output_dir: generated
+templates:
+  - for: entity
+    source: templates/entity.cs.tmpl
+    targets:
+      - "src/Domain/Entities/{{ .Entity.Name }}.cs"
+
+  - for: entity
+    source: templates/entity-configuration.cs.tmpl
+    target: "src/Infrastructure/Persistence/Configurations/{{ .Entity.Name }}Configuration.cs"
+
+  - for: entity
+    source: templates/entity-summary.md.tmpl
+    target: "docs/Entities/{{ .Entity.Name }}.md"
+
+  - for: entity
+    source: templates/entity-seed.json.tmpl
+    target: "src/Infrastructure/Seed/{{ .Entity.Name }}.seed.json"
+    when: hasSeed
+
+  - for: entity
+    source: templates/repository.cs.tmpl
+    target: "src/Application/Repositories/{{ .Entity.Name }}Repository.cs"
+
+  - for: project
+    source: templates/seed-seeder.cs.tmpl
+    target: "src/Infrastructure/Persistence/Seeders/DomainSeeder.cs"
+
+  - for: project
+    source: templates/dbcontext.cs.tmpl
+    target: "src/Infrastructure/Persistence/DomainDbContext.cs"
+
+  - for: project
+    source: templates/enums.cs.tmpl
+    target: "src/Domain/Shared/DomainEnums.cs"
+
+  - for: project
+    source: templates/permissions.cs.tmpl
+    target: "src/Application/Security/PermissionPolicies.cs"
+
+  - for: project
+    source: templates/domain.csproj.tmpl
+    target: "src/Domain/Domain.csproj"
+
+  - for: project
+    source: templates/application.csproj.tmpl
+    target: "src/Application/Application.csproj"
+
+  - for: project
+    source: templates/infrastructure.csproj.tmpl
+    target: "src/Infrastructure/Infrastructure.csproj"
+
+  - for: project
+    source: templates/solution.sln.tmpl
+    target: "{{ .Project.Name | pascalcase }}.sln"
+
+  - for: project
+    source: templates/project-summary.md.tmpl
+    target: "README.generated.md"
+
+  - for: project
+    source: templates/service-registration.cs.tmpl
+    target: "src/Infrastructure/DependencyInjection/ServiceRegistration.cs"
+
+  - for: project
+    source: templates/Program.cs.tmpl
+    target: "src/Infrastructure/Program.cs"

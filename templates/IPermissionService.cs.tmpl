@@ -1,0 +1,16 @@
+using System.Collections.Generic;
+
+namespace Application.Security;
+
+public interface IPermissionService
+{
+    // Returns true if the current user has any of the specified roles.
+    bool HasAnyRole(IEnumerable<string> roles);
+
+    // Legacy: convenience method to check by single role name
+    bool IsInRole(string role);
+    
+    // Ownership check for a specific entity instance. Bridges should implement
+    // logic to determine whether the current user owns the supplied entity.
+    bool IsOwner(object entity);
+}

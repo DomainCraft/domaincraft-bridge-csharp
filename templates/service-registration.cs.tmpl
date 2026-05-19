@@ -1,0 +1,29 @@
+using System;
+using Microsoft.Extensions.DependencyInjection;
+using Application.Repositories;
+using Application.Security;
+using Infrastructure.Persistence.Seeders;
+
+namespace Infrastructure.DependencyInjection;
+
+public static class ServiceRegistration
+{
+    public static IServiceCollection AddGeneratedDomainServices(this IServiceCollection services)
+    {
+        if (services == null) throw new ArgumentNullException(nameof(services));
+
+        // Register permission and owner services (bridge can replace these)
+        services.AddScoped<IOwnerResolver, OwnerResolver>();
+        services.AddScoped<IPermissionService, PermissionService>();
+
+        // Register repositories
+{{- range .Project.Entities }}
+        services.AddScoped<I{{ .Name }}Repository, {{ .Name }}Repository>();
+{{- end }}
+
+        // Register seeder
+        services.AddScoped<DomainSeeder>();
+
+        return services;
+    }
+}
