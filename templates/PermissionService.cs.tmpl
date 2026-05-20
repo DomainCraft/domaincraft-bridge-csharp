@@ -2,8 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
 
-namespace Application.Security;
+namespace {{ .Project.Name | pascalcase }}.Application.Security;
 
 /// <summary>
 /// Basic implementation of <see cref="IPermissionService"/> that reads roles from
@@ -14,14 +15,13 @@ namespace Application.Security;
 public class PermissionService : IPermissionService
 {
     private readonly ClaimsPrincipal _user;
-    private readonly Func<Guid?> _currentUserIdResolver; // optional resolver for owner checks
     private readonly IOwnerResolver? _ownerResolver;
 
-    public PermissionService(ClaimsPrincipal user, IOwnerResolver? ownerResolver = null, Func<Guid?>? currentUserIdResolver = null)
+    public PermissionService(IHttpContextAccessor httpContextAccessor, IOwnerResolver? ownerResolver = null)
     {
-        _user = user ?? throw new ArgumentNullException(nameof(user));
+        _user = httpContextAccessor?.HttpContext?.User
+            ?? throw new ArgumentNullException(nameof(httpContextAccessor));
         _ownerResolver = ownerResolver;
-        _currentUserIdResolver = currentUserIdResolver ?? (() => null);
     }
 
     public bool HasAnyRole(IEnumerable<string> roles)

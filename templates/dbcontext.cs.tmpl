@@ -1,21 +1,80 @@
 using Microsoft.EntityFrameworkCore;
-using Generated.{{ .Project.Name | pascalcase }}.Domain.Entities;
+using {{ .Project.Name | pascalcase }}.Domain.Entities;
+using {{ .Project.Name | pascalcase }}.Infrastructure.Persistence.Configurations;
 
-namespace Generated.{{ .Project.Name | pascalcase }}.Infrastructure.Persistence;
+namespace {{ .Project.Name | pascalcase }}.Infrastructure.Persistence;
 
+/// <summary>
+/// Entity Framework Core DbContext for {{ .Project.Name | pascalcase }} domain
+/// </summary>
 public class DomainDbContext : DbContext
 {
-    public DomainDbContext(DbContextOptions<DomainDbContext> options) : base(options)
+    public DomainDbContext(DbContextOptions<DomainDbContext> options)
+        : base(options)
     {
     }
 
+    #region DbSets
 {{- range .Project.Entities }}
+    /// <summary>
+    /// {{ .NamePlural }} table
+    /// </summary>
     public DbSet<{{ .Name }}> {{ .NamePlural }} { get; set; } = default!;
 {{- end }}
+    #endregion
 
+    /// <summary>
+    /// Configure model on context creation
+    /// </summary>
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        // Apply all entity configurations from this assembly
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(DomainDbContext).Assembly);
+    }
+
+    /// <summary>
+    /// Override SaveChanges to update audit timestamps
+    /// </summary>
+    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        ApplyAuditTimestamps();
+        return await base.SaveChangesAsync(cancellationToken);
+    }
+
+    public override int SaveChanges()
+    {
+        ApplyAuditTimestamps();
+        return base.SaveChanges();
+    }
+
+    /// <summary>
+    /// Apply audit timestamps to entities that have CreatedAt/UpdatedAt properties
+    /// </summary>
+    private void ApplyAuditTimestamps()
+    {
+        var entries = ChangeTracker.Entries()
+            .Where(e => e.State == EntityState.Added || e.State == EntityState.Modified);
+
+        foreach (var entry in entries)
+        {
+            var entityType = entry.Entity.GetType();
+
+            if (entry.State == EntityState.Added)
+            {
+                var createdAtProp = entityType.GetProperty("CreatedAt");
+                if (createdAtProp != null && createdAtProp.PropertyType == typeof(DateTime))
+                {
+                    createdAtProp.SetValue(entry.Entity, DateTime.UtcNow);
+                }
+            }
+
+            var updatedAtProp = entityType.GetProperty("UpdatedAt");
+            if (updatedAtProp != null && updatedAtProp.PropertyType == typeof(DateTime))
+            {
+                updatedAtProp.SetValue(entry.Entity, DateTime.UtcNow);
+            }
+        }
     }
 }

@@ -1,0 +1,27 @@
+namespace {{ .Project.Name | pascalcase }}.Application.Caching;
+
+/// <summary>
+/// Interface for distributed caching service
+/// </summary>
+public interface ICacheService
+{
+    /// <summary>
+    /// Get a cached value by key
+    /// </summary>
+    Task<T?> GetAsync<T>(string key, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Set a value in the cache with optional expiration
+    /// </summary>
+    Task SetAsync<T>(string key, T value, TimeSpan? expiration = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Remove a cached value by key
+    /// </summary>
+    Task RemoveAsync(string key, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Remove all cached values with the given prefix
+    /// </summary>
+    Task RemoveByPrefixAsync(string prefix, CancellationToken cancellationToken = default);
+}

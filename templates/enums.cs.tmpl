@@ -1,13 +1,17 @@
 using System.Runtime.Serialization;
 
-namespace Generated.{{ .Project.Name | pascalcase }}.Domain.Shared;
+namespace {{ .Project.Name | pascalcase }}.Domain.Shared;
 
 {{- range $enumName, $enumValues := .Project.Enums }}
+/// <summary>
+/// Enum: {{ $enumName }}
+/// </summary>
 public enum {{ $enumName | pascalcase }}
 {
-{{- range $enumValue := $enumValues }}
-    [EnumMember(Value = "{{ $enumValue }}")]
-    {{ $enumValue | pascalcase }},
+{{- range $idx, $enumValue := $enumValues }}
+    /// <summary>{{ $enumValue }}</summary>
+    [EnumMember(Value = "{{ $enumValue | snakecase }}")]
+    {{ $enumValue | pascalcase }} = {{ $idx }},
 {{- end }}
 }
 

@@ -1,8 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <RootNamespace>Generated.{{ .Project.Name | pascalcase }}.Domain</RootNamespace>
+    <RootNamespace>{{ .Project.Name | pascalcase }}.Domain</RootNamespace>
+    <AssemblyName>{{ .Project.Name | pascalcase }}.Domain</AssemblyName>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+  </ItemGroup>
 </Project>

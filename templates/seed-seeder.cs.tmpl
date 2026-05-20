@@ -1,84 +1,105 @@
 using System;
-using System.IO;
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+using {{ .Project.Name | pascalcase }}.Domain.Entities;
+using {{ .Project.Name | pascalcase }}.Infrastructure.Persistence;
+using Microsoft.Extensions.Logging;
 
-namespace Infrastructure.Persistence.Seeders;
+namespace {{ .Project.Name | pascalcase }}.Infrastructure.Persistence.Seeders;
 
 /// <summary>
-/// Domain seeder that applies seed data from JSON files into the database.
+/// Database seeder that applies seed data into the database
 /// </summary>
 public class DomainSeeder
 {
     private readonly DomainDbContext _context;
-    private readonly string _seedsDirectory;
+    private readonly ILogger<DomainSeeder> _logger;
 
-    public DomainSeeder(DomainDbContext context, string seedsDirectory = "./src/Infrastructure/Seed")
+    public DomainSeeder(DomainDbContext context, ILogger<DomainSeeder> logger)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
-        _seedsDirectory = seedsDirectory;
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     /// <summary>
-    /// Seed the database with data from JSON files.
+    /// Seed the database with initial data.
+    /// Entities are seeded in multiple passes to handle FK dependencies.
     /// </summary>
     public async Task SeedAsync()
     {
-        Console.WriteLine("Starting database seeding...");
+        _logger.LogInformation("Starting database seeding...");
 
+        // Multiple passes to handle FK dependencies
+        var maxPasses = 5;
+        for (var pass = 0; pass < maxPasses; pass++)
+        {
+            var seeded = false;
 {{- range .Project.Entities }}
 {{- if .Seed }}
-        await Seed{{ .Name }}Async();
+            seeded |= await Seed{{ .Name }}Async();
 {{- end }}
 {{- end }}
+            if (!seeded) break;
+        }
 
-        Console.WriteLine("Database seeding completed.");
+        _logger.LogInformation("Database seeding completed");
     }
 
 {{- range .Project.Entities }}
 {{- if .Seed }}
+{{- $entity := . }}
 
-    private async Task Seed{{ .Name }}Async()
+    /// <summary>
+    /// Seed {{ pluralize .Name | lowercase }} entity
+    /// </summary>
+    /// <returns>True if entities were seeded, false if skipped or failed</returns>
+    private async Task<bool> Seed{{ .Name }}Async()
     {
-        var seedFile = Path.Combine(_seedsDirectory, "{{ .Name }}.seed.json");
-        
-        if (!File.Exists(seedFile))
+        // Check if data already exists
+        if (await _context.{{ .NamePlural }}.AnyAsync())
         {
-            Console.WriteLine("Seed file not found: {0}", seedFile);
-            return;
+            return false;
         }
 
         try
         {
-            var json = await File.ReadAllTextAsync(seedFile);
-            if (string.IsNullOrWhiteSpace(json) || json.Trim() == "[]")
+            _logger.LogInformation("Seeding {{ pluralize .Name | lowercase }}...");
+
+            var entities = new List<{{ .Name }}>
             {
-                Console.WriteLine("{{ .Name }}.seed.json is empty, skipping.");
-                return;
-            }
-
-            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            var items = JsonSerializer.Deserialize<{{ .Name }}[]>(json, options);
-
-            if (items == null || items.Length == 0)
-                return;
-
-            foreach (var item in items)
-            {
-                if (!await _context.{{ .Name | pluralize }}.AnyAsync(x => x.Id == item.Id))
+{{- range .Seed }}
+                new {{ $entity.Name }}
                 {
-                    _context.{{ .Name | pluralize }}.Add(item);
-                }
-            }
+{{- range $k, $v := . }}
+{{- $field := lookupField $k $entity }}
+{{- if and $field (eq $field.DatabaseType "uuid") }}
+                    {{ $k | pascalcase }} = Guid.Parse({{ jsonValue $v }}),
+{{- else if and $field (eq $field.DatabaseType "time.Time") }}
+                    {{ $k | pascalcase }} = DateTime.Parse({{ jsonValue $v }}),
+{{- else if and $field (or (eq $field.DatabaseType "json") (eq $field.DatabaseType "jsonb")) }}
+                    {{ $k | pascalcase }} = JsonDocument.Parse({{ jsonValue $v }}, default),
+{{- else if and $field (or (eq $field.DatabaseType "float64") (eq $field.DatabaseType "decimal") (eq $field.DatabaseType "int") (eq $field.DatabaseType "int64") (eq $field.DatabaseType "bool")) }}
+                    {{ $k | pascalcase }} = {{ rawSeedValue $v $field.DatabaseType }},
+{{- else }}
+                    {{ $k | pascalcase }} = {{ jsonValue $v }},
+{{- end }}
+{{- end }}
+                },
+{{- end }}
+            };
 
+            await _context.{{ .NamePlural }}.AddRangeAsync(entities);
             await _context.SaveChangesAsync();
-            Console.WriteLine("{{ .Name }} seeding completed ({0} items).", items.Length);
+
+            _logger.LogInformation("Seeded {Count} {{ pluralize .Name | lowercase }}", entities.Count);
+            return true;
         }
         catch (Exception ex)
         {
-            Console.WriteLine("Error seeding {{ .Name }}: {0}", ex.Message);
-            throw;
+            _logger.LogWarning("Failed to seed {{ pluralize .Name | lowercase }} (dependencies may not exist yet): {Message}", ex.Message);
+            return false;
         }
     }
 {{- end }}

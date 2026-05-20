@@ -1,0 +1,18 @@
+{{- $proj := .Project.Name | pascalcase }}
+using Microsoft.Extensions.DependencyInjection;
+using {{ $proj }}.Application.Repositories;
+using {{ $proj }}.Infrastructure.Repositories;
+
+namespace {{ $proj }}.Infrastructure;
+
+public static class DependencyInjection
+{
+    public static IServiceCollection AddInfrastructureServices(this IServiceCollection services)
+    {
+{{- range .Project.Entities }}
+        services.AddScoped<I{{ .Name }}Repository, {{ .Name }}Repository>();
+{{- end }}
+
+        return services;
+    }
+}

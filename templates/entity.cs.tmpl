@@ -1,60 +1,124 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Generated.{{ .Project.Name | pascalcase }}.Domain.Entities;
+namespace {{ .Project.Name | pascalcase }}.Domain.Entities;
 
+/// <summary>
+/// Entity: {{ .Entity.Name }}
+/// </summary>
+[Table("{{ .Entity.Name | snakecase }}")]
 public class {{ .Entity.Name }}
 {
 {{- range .Entity.Fields }}
+{{- if isFeatureField .Name }}
+{{- /* Skip feature fields - they are generated in dedicated sections below */ -}}
+{{- else if .IsPrimary }}
+    /// <summary>Primary Key</summary>
+    [Key]
+    [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
+    public {{ languageType .DatabaseType .IsNullable }} {{ .Name | pascalcase }} { get; set; }
+
+{{- else if .IsRelation }}
+{{- if .IsMany }}
+    /// <summary>Navigation: {{ .RelationTarget }} (one-to-many)</summary>
+    [JsonPropertyName("{{ .Name | camelcase }}")]
+    public virtual ICollection<{{ .RelationTarget }}> {{ .Name | pascalcase }} { get; set; } = new List<{{ .RelationTarget }}>();
+
+{{- else }}
+    /// <summary>Foreign Key to {{ .RelationTarget }}</summary>
+{{- $fkName := .Name | pascalcase }}
+{{- if not (hasSuffix "Id" $fkName) }}
+{{- $fkName = print $fkName "Id" }}
+{{- end }}
+{{- $navName := $fkName | trimSuffix "Id" }}
+{{- if eq $navName "" }}{{ $navName = .RelationTarget }}{{ end }}
+{{- if .IsNullable }}
+    [JsonPropertyName("{{ .Name | camelcase }}")]
+    public {{ languageType .DatabaseType .IsNullable }} {{ $fkName }} { get; set; }
+{{- else }}
+    [Required]
+    [JsonPropertyName("{{ .Name | camelcase }}")]
+    public {{ languageType .DatabaseType .IsNullable }} {{ $fkName }} { get; set; } = default!;
+{{- end }}
+
+    [ForeignKey("{{ $fkName }}")]
+    public virtual {{ .RelationTarget }} {{ $navName }} { get; set; } = default!;
+
+{{- end }}
+{{- else }}
 {{- if .IsHidden }}
     [JsonIgnore]
 {{- end }}
-{{- if and (not .IsNullable) (not .IsMany) }}
+{{- if and (not .IsNullable) (ne .DatabaseType "json") (ne .DatabaseType "jsonb") }}
     [Required]
 {{- end }}
-{{- if .IsPrimary }}
-    [Key]
+{{- if and (eq .DatabaseType "string") (.HasValidation "email") }}
+    [EmailAddress(ErrorMessage = "Invalid email address")]
 {{- end }}
-{{- if and (not .IsRelation) (eq .DatabaseType "string") (.HasValidation "email") }}
-    [EmailAddress]
+{{- if and (eq .DatabaseType "string") (.HasValidation "url") }}
+    [Url(ErrorMessage = "Invalid URL")]
 {{- end }}
-{{- if and (not .IsRelation) (.HasValidation "url") }}
-    [Url]
+{{- if and (eq .DatabaseType "string") (.HasValidation "regex") }}
+{{- $regex := .ValidationValue "regex" }}
+{{- if and $regex (ne $regex "^") }}
+    [RegularExpression("{{ $regex }}", ErrorMessage = "Invalid format")]
 {{- end }}
-{{- if and (not .IsRelation) (.HasValidation "regex") }}
-    [RegularExpression("{{ .ValidationValue "regex" }}")]
 {{- end }}
-{{- if and (not .IsRelation) (or (.HasValidation "min") (.HasValidation "max")) }}
+{{- if and (eq .DatabaseType "string") (or (.HasValidation "min") (.HasValidation "max")) }}
     [StringLength({{ if .HasValidation "max" }}{{ .ValidationValue "max" }}{{ else }}int.MaxValue{{ end }}, MinimumLength = {{ if .HasValidation "min" }}{{ .ValidationValue "min" }}{{ else }}0{{ end }})]
 {{- end }}
-{{- if and (not .IsRelation) (and (.HasValidation "gte") (.HasValidation "lte")) }}
-    [Range({{ .ValidationValue "gte" }}, {{ .ValidationValue "lte" }})]
-{{- else if and (not .IsRelation) (.HasValidation "gte") }}
-    [Range({{ .ValidationValue "gte" }}, double.MaxValue)]
-{{- else if and (not .IsRelation) (.HasValidation "gt") }}
-    [Range({{ .ValidationValue "gt" }}, double.MaxValue)]
-{{- end }}
-{{- if .IsRelation }}
-{{- if .IsMany }}
-    public ICollection<{{ .RelationTarget }}> {{ .Name | pascalcase }} { get; set; } = new List<{{ .RelationTarget }}>();
-{{- else }}
-    public {{ csharpType .DatabaseType .IsNullable }} {{ .Name | pascalcase }} { get; set; }{{ if .IsNullable }}{{ else }} = default!;{{ end }}
-{{- end }}
-{{- else }}
-    public {{ csharpType .DatabaseType .IsNullable }} {{ .Name | pascalcase }} { get; set; }{{ if .IsNullable }}{{ else }} = default!;{{ end }}
-{{- end }}
+{{- $nullable := or .IsNullable (eq .DatabaseType "json") (eq .DatabaseType "jsonb") }}
+    public {{ languageType .DatabaseType $nullable }} {{ .Name | pascalcase }} { get; set; }{{ if and (not $nullable) (isValueType .DatabaseType) }}{{ else if not $nullable }} = default!;{{ end }}
 
-{{- end }}
-
-{{- range .Entity.RelationsOut }}
-{{- if not .IsMany }}
-    public {{ .TargetEntity.Name }}? {{ .NavigationName }} { get; set; }
 {{- end }}
 {{- end }}
 
+{{/* ===== Inverse navigation properties for relations pointing TO this entity ===== */}}
 {{- range .Entity.RelationsIn }}
-    public ICollection<{{ .TargetEntity.Name }}> {{ .InverseNavName }} { get; set; } = new List<{{ .TargetEntity.Name }}>();
+{{- if .IsMany }}
+    /// <summary>Inverse navigation: {{ .TargetEntity.Name }}.{{ .FieldName | pascalcase }} (one-to-many)</summary>
+    [JsonIgnore]
+    public virtual ICollection<{{ .TargetEntity.Name }}> {{ .InverseNavName | pascalcase }} { get; set; } = new List<{{ .TargetEntity.Name }}>();
 {{- end }}
+{{- end }}
+
+{{- if .HasAudit }}
+    /// <summary>Audit: Creation timestamp</summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Audit: Last modification timestamp</summary>
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+{{- end }}
+
+{{- if .HasSoftDelete }}
+    /// <summary>Soft Delete: Logical deletion timestamp</summary>
+    public DateTime? DeletedAt { get; set; }
+
+{{- end }}
+
+{{- if .HasOptimisticLock }}
+    /// <summary>Optimistic Lock: Version for concurrency control</summary>
+    [ConcurrencyCheck]
+    public int Version { get; set; } = 1;
+
+{{- end }}
+
+{{- if and .Permissions .Permissions.ReadPublic }}
+    /// <summary>
+    /// ReadPublic filter: {{ .Permissions.ReadPublic }}
+    /// Applied when user has only public (*) read access
+    /// </summary>
+    public static bool HasPublicReadAccess({{ .Entity.Name }} entity)
+    {
+        // TODO: Implement condition: {{ .Permissions.ReadPublic }}
+        return true;
+    }
+
+{{- end }}
+    public override string ToString() => $"{{ .Entity.Name }}(Id={ {{- if .PrimaryKey }}{{ .PrimaryKey.Name | pascalcase }}{{- end }} })";
 }

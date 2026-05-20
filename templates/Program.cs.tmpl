@@ -1,32 +1,278 @@
-using System;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Infrastructure.DependencyInjection;
+using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
+using {{ .Project.Name | pascalcase }}.Application;
+using {{ .Project.Name | pascalcase }}.Application.Caching;
+using {{ .Project.Name | pascalcase }}.Infrastructure;
+using {{ .Project.Name | pascalcase }}.Infrastructure.Caching;
+using {{ .Project.Name | pascalcase }}.Infrastructure.Persistence;
+using {{ .Project.Name | pascalcase }}.Infrastructure.Persistence.Seeders;
+using {{ .Project.Name | pascalcase }}.WebApi.HealthChecks;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Register generated domain services (repositories, permission/owner services, seeder)
-builder.Services.AddGeneratedDomainServices();
+// Configuration
+var jwtSecret = builder.Configuration["Jwt:Secret"] ?? throw new InvalidOperationException("JWT secret not configured");
+var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "{{ .Project.Name }}";
+var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "{{ .Project.Name }}-api";
 
-// Add other application services here
-// builder.Services.AddControllers();
+// Add services
+builder.Services.AddDbContext<DomainDbContext>(options =>
+{
+    var connectionString = builder.Configuration.GetConnectionString("PostgreSQL")
+        ?? throw new InvalidOperationException("PostgreSQL connection string not configured");
+    options.UseNpgsql(connectionString, npg => npg.MigrationsAssembly("{{ .Project.Name | pascalcase }}.Infrastructure"));
+});
+
+// Redis Cache
+var redisConnectionString = builder.Configuration.GetConnectionString("Redis");
+if (!string.IsNullOrEmpty(redisConnectionString))
+{
+    builder.Services.AddStackExchangeRedisCache(options =>
+    {
+        options.Configuration = redisConnectionString;
+        options.InstanceName = "{{ .Project.Name }}_";
+    });
+    builder.Services.AddSingleton<ICacheService, RedisCacheService>();
+}
+else
+{
+    // Fallback to in-memory cache if Redis is not configured
+    builder.Services.AddDistributedMemoryCache();
+    builder.Services.AddSingleton<ICacheService, RedisCacheService>();
+}
+
+// Health Checks (skip external service checks in Testing environment)
+var healthChecksBuilder = builder.Services.AddHealthChecks();
+if (!builder.Environment.IsEnvironment("Testing"))
+{
+    healthChecksBuilder
+        .AddNpgSql(builder.Configuration.GetConnectionString("PostgreSQL") ?? "", name: "postgresql")
+        .AddRedis(redisConnectionString ?? "localhost:6379", name: "redis");
+}
+
+// Authentication - JWT
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(jwtSecret)),
+            ValidateIssuer = true,
+            ValidIssuer = jwtIssuer,
+            ValidateAudience = true,
+            ValidAudience = jwtAudience,
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromSeconds(10),
+        };
+        
+        options.Events = new JwtBearerEvents
+        {
+            OnAuthenticationFailed = context =>
+            {
+                if (context.Exception is SecurityTokenExpiredException)
+                    context.Response.Headers.Add("X-Token-Expired", "true");
+                return Task.CompletedTask;
+            },
+        };
+    });
+
+// Authorization
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddAuthorization(options =>
+{
+{{- range .Project.Entities }}
+{{- if .Permissions }}
+    // Policies for {{ .Name }}
+{{- if and .Permissions.Read (not (isPublicPermission .Permissions.Read)) }}
+    options.AddPolicy("{{ .Name }}Read", policy =>
+    {
+{{- range .Permissions.Read }}
+{{- if hasPrefix "@" . }}
+        // Ownership-based: {{ . }} — resolved at runtime via IPermissionService
+        policy.RequireAuthenticatedUser();
+{{- else if ne . "*" }}
+        policy.RequireRole("{{ . }}");
+{{- end }}
+{{- end }}
+    });
+{{- end }}
+{{- if and .Permissions.Create (not (isPublicPermission .Permissions.Create)) }}
+    options.AddPolicy("{{ .Name }}Create", policy =>
+    {
+{{- range .Permissions.Create }}
+{{- if hasPrefix "@" . }}
+        policy.RequireAuthenticatedUser();
+{{- else if ne . "*" }}
+        policy.RequireRole("{{ . }}");
+{{- end }}
+{{- end }}
+    });
+{{- end }}
+{{- if and .Permissions.Update (not (isPublicPermission .Permissions.Update)) }}
+    options.AddPolicy("{{ .Name }}Update", policy =>
+    {
+{{- range .Permissions.Update }}
+{{- if hasPrefix "@" . }}
+        policy.RequireAuthenticatedUser();
+{{- else if ne . "*" }}
+        policy.RequireRole("{{ . }}");
+{{- end }}
+{{- end }}
+    });
+{{- end }}
+{{- if and .Permissions.Delete (not (isPublicPermission .Permissions.Delete)) }}
+    options.AddPolicy("{{ .Name }}Delete", policy =>
+    {
+{{- range .Permissions.Delete }}
+{{- if hasPrefix "@" . }}
+        policy.RequireAuthenticatedUser();
+{{- else if ne . "*" }}
+        policy.RequireRole("{{ . }}");
+{{- end }}
+{{- end }}
+    });
+{{- end }}
+{{- end }}
+{{- end }}
+});
+
+// Register services
+builder.Services.AddScoped<DomainSeeder>();
+builder.Services.AddApplicationServices();
+builder.Services.AddInfrastructureServices();
+
+// Controllers
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
+    });
+
+// Logging
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.AddDebug();
+
+// Swagger/OpenAPI
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "{{ .Project.Name }} API",
+        Version = "v1",
+        Description = "Generated REST API for {{ .Project.Name }} domain model",
+        Contact = new OpenApiContact { Name = "Support" },
+    });
+
+    // JWT Security Definition
+    var securityScheme = new OpenApiSecurityScheme
+    {
+        Name = "JWT Authentication",
+        Description = "Enter JWT Bearer token",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+    };
+
+    c.AddSecurityDefinition("Bearer", securityScheme);
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
+            },
+            Array.Empty<string>()
+        }
+    });
+});
+
+// CORS (if needed)
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyMethod()
+              .AllowAnyHeader();
+    });
+});
 
 var app = builder.Build();
 
-// Configure middleware, endpoints, etc.
-// app.UseRouting();
-// app.MapControllers();
-
-// Optionally run seeder on startup
-using (var scope = app.Services.CreateScope())
+// Middleware pipeline
+if (app.Environment.IsDevelopment())
 {
-    var seeder = scope.ServiceProvider.GetService<DomainSeeder>();
-    if (seeder != null)
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
     {
-        // Consider awaiting this in async host startup in real apps
-        seeder.SeedAsync().GetAwaiter().GetResult();
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "{{ .Project.Name }} API v1");
+    });
+}
+
+if (!app.Environment.IsEnvironment("Testing"))
+{
+    app.UseHttpsRedirection();
+}
+app.UseCors("AllowAll");
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapControllers();
+
+// Health Checks endpoint
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    ResponseWriter = HealthCheckResponseWriter.WriteResponse,
+    Predicate = _ => true
+});
+
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    ResponseWriter = HealthCheckResponseWriter.WriteResponse,
+    Predicate = check => check.Tags.Contains("ready")
+});
+
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate = _ => false
+});
+
+// Database setup and seeding (skip in Testing environment - tests manage their own database)
+if (!app.Environment.IsEnvironment("Testing"))
+{
+    using (var scope = app.Services.CreateScope())
+    {
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+        try
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<DomainDbContext>();
+
+            // Create database if not exists
+            await dbContext.Database.EnsureCreatedAsync();
+
+            // Run seeder
+            var seeder = scope.ServiceProvider.GetRequiredService<DomainSeeder>();
+            await seeder.SeedAsync();
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "An error occurred during database initialization");
+        }
     }
 }
 
 app.Run();
+
+// Make Program accessible for integration tests
+public partial class Program { }
+

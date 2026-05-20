@@ -1,69 +1,153 @@
-name: csharp
-description: Full-featured C# bridge for DomainCraft
+name: csharp-restful
+description: C# REST API bridge for DomainCraft (EF Core + PostgreSQL + JWT)
+version: "1.0.0"
 output_dir: generated
+
+# Поддерживаемые конфигурации
+supports:
+  - api_style: rest
+  - database: postgresql
+  - auth: jwt
+  - multi_tenancy: "none"
+
 templates:
+  # ===== DOMAIN ENTITIES & SHARED =====
   - for: entity
     source: templates/entity.cs.tmpl
-    targets:
-      - "src/Domain/Entities/{{ .Entity.Name }}.cs"
+    target: "src/Domain/Entities/{{ .Entity.Name }}.cs"
+
+  - for: project
+    source: templates/enums.cs.tmpl
+    target: "src/Domain/Shared/Enums.cs"
+    when: hasEnums
+
+  # ===== INFRASTRUCTURE PERSISTENCE =====
+  - for: project
+    source: templates/dbcontext.cs.tmpl
+    target: "src/Infrastructure/Persistence/DomainDbContext.cs"
 
   - for: entity
     source: templates/entity-configuration.cs.tmpl
     target: "src/Infrastructure/Persistence/Configurations/{{ .Entity.Name }}Configuration.cs"
 
-  - for: entity
-    source: templates/entity-summary.md.tmpl
-    target: "docs/Entities/{{ .Entity.Name }}.md"
-
-  - for: entity
-    source: templates/entity-seed.json.tmpl
-    target: "src/Infrastructure/Seed/{{ .Entity.Name }}.seed.json"
-    when: hasSeed
-
-  - for: entity
-    source: templates/repository.cs.tmpl
-    target: "src/Application/Repositories/{{ .Entity.Name }}Repository.cs"
-
   - for: project
     source: templates/seed-seeder.cs.tmpl
     target: "src/Infrastructure/Persistence/Seeders/DomainSeeder.cs"
 
-  - for: project
-    source: templates/dbcontext.cs.tmpl
-    target: "src/Infrastructure/Persistence/DomainDbContext.cs"
+  # ===== APPLICATION REPOSITORIES (interfaces) =====
+  - for: entity
+    source: templates/repository.cs.tmpl
+    target: "src/Application/Repositories/I{{ .Entity.Name }}Repository.cs"
 
   - for: project
-    source: templates/enums.cs.tmpl
-    target: "src/Domain/Shared/DomainEnums.cs"
+    source: templates/irepository-base.cs.tmpl
+    target: "src/Application/Repositories/IRepository.cs"
 
+  # ===== INFRASTRUCTURE REPOSITORIES (EF Core implementations) =====
+  - for: entity
+    source: templates/repository-impl.cs.tmpl
+    target: "src/Infrastructure/Repositories/{{ .Entity.Name }}Repository.cs"
+
+  - for: project
+    source: templates/infrastructure-di.cs.tmpl
+    target: "src/Infrastructure/DependencyInjection.cs"
+
+  # ===== APPLICATION HANDLERS / SERVICES =====
   - for: project
     source: templates/permissions.cs.tmpl
     target: "src/Application/Security/PermissionPolicies.cs"
 
   - for: project
-    source: templates/domain.csproj.tmpl
-    target: "src/Domain/Domain.csproj"
+    source: templates/IPermissionService.cs.tmpl
+    target: "src/Application/Security/IPermissionService.cs"
 
   - for: project
-    source: templates/application.csproj.tmpl
-    target: "src/Application/Application.csproj"
+    source: templates/PermissionService.cs.tmpl
+    target: "src/Application/Security/PermissionService.cs"
+
+  - for: project
+    source: templates/IOwnerResolver.cs.tmpl
+    target: "src/Application/Security/IOwnerResolver.cs"
+
+  - for: project
+    source: templates/OwnerResolver.cs.tmpl
+    target: "src/Application/Security/OwnerResolver.cs"
+
+  - for: project
+    source: templates/service-registration.cs.tmpl
+    target: "src/Application/DependencyInjection.cs"
+
+  # ===== CACHING =====
+  - for: project
+    source: templates/icache-service.cs.tmpl
+    target: "src/Application/Caching/ICacheService.cs"
+
+  - for: project
+    source: templates/redis-cache.cs.tmpl
+    target: "src/Infrastructure/Caching/RedisCacheService.cs"
+
+  # ===== HEALTH CHECKS =====
+  - for: project
+    source: templates/health-checks.cs.tmpl
+    target: "src/WebApi/HealthChecks/HealthCheckResponseWriter.cs"
+
+  # ===== REST API CONTROLLERS =====
+  - for: entity
+    source: templates/controller.cs.tmpl
+    target: "src/WebApi/Controllers/{{ pluralize .Entity.Name }}Controller.cs"
+
+  # ===== PROJECT FILES =====
+  - for: project
+    source: templates/domain.csproj.tmpl
+    target: "src/Domain/Domain.csproj"
 
   - for: project
     source: templates/infrastructure.csproj.tmpl
     target: "src/Infrastructure/Infrastructure.csproj"
 
   - for: project
-    source: templates/solution.sln.tmpl
-    target: "{{ .Project.Name | pascalcase }}.sln"
+    source: templates/application.csproj.tmpl
+    target: "src/Application/Application.csproj"
 
   - for: project
-    source: templates/project-summary.md.tmpl
-    target: "README.generated.md"
-
-  - for: project
-    source: templates/service-registration.cs.tmpl
-    target: "src/Infrastructure/DependencyInjection/ServiceRegistration.cs"
+    source: templates/webapi.csproj.tmpl
+    target: "src/WebApi/WebApi.csproj"
 
   - for: project
     source: templates/Program.cs.tmpl
-    target: "src/Infrastructure/Program.cs"
+    target: "src/WebApi/Program.cs"
+
+  - for: project
+    source: templates/appsettings.json.tmpl
+    target: "src/WebApi/appsettings.json"
+
+  # ===== DOCUMENTATION =====
+  - for: entity
+    source: templates/entity-summary.md.tmpl
+    target: "docs/Entities/{{ .Entity.Name }}.md"
+
+  - for: project
+    source: templates/project-summary.md.tmpl
+    target: "docs/ProjectSummary.md"
+
+  - for: project
+    source: templates/solution.sln.tmpl
+    target: "{{ .Project.Name | pascalcase }}.sln"
+
+  # ===== TESTS =====
+  - for: project
+    source: templates/tests.cs.tmpl
+    target: "tests/ApiTests.cs"
+
+  - for: project
+    source: templates/tests.csproj.tmpl
+    target: "tests/{{ .Project.Name | pascalcase }}.Tests.csproj"
+
+  # ===== DOCKER =====
+  - for: project
+    source: templates/Dockerfile.tmpl
+    target: "Dockerfile"
+
+  - for: project
+    source: templates/docker-compose.yml.tmpl
+    target: "docker-compose.yml"

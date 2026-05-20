@@ -1,0 +1,435 @@
+using System.ComponentModel.DataAnnotations;
+using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using {{ .Project.Name | pascalcase }}.Application.Repositories;
+using {{ .Project.Name | pascalcase }}.Application.Security;
+using {{ .Project.Name | pascalcase }}.Domain.Entities;
+
+namespace {{ .Project.Name | pascalcase }}.WebApi.Controllers;
+
+/// <summary>
+/// REST API Controller for {{ pluralize .Entity.Name }} resource
+/// </summary>
+[ApiController]
+[Route("api/[controller]")]
+[Produces("application/json")]
+public class {{ pluralize .Entity.Name }}Controller : ControllerBase
+{
+    private readonly I{{ .Entity.Name }}Repository _repository;
+    private readonly IPermissionService _permissionService;
+    private readonly ILogger<{{ pluralize .Entity.Name }}Controller> _logger;
+
+    public {{ pluralize .Entity.Name }}Controller(
+        I{{ .Entity.Name }}Repository repository,
+        IPermissionService permissionService,
+        ILogger<{{ pluralize .Entity.Name }}Controller> logger)
+    {
+        _repository = repository ?? throw new ArgumentNullException(nameof(repository));
+        _permissionService = permissionService ?? throw new ArgumentNullException(nameof(permissionService));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    }
+
+    /// <summary>
+    /// Get all {{ pluralize .Entity.Name | lowercase }}
+    /// </summary>
+{{- if .Permissions }}
+{{- if and .Permissions.Read (not (isPublicPermission .Permissions.Read)) }}
+    [Authorize(Policy = "{{ .Entity.Name }}Read")]
+{{- else }}
+    [AllowAnonymous]
+{{- end }}
+{{- else }}
+    [AllowAnonymous]
+{{- end }}
+    [HttpGet]
+    [ProducesResponseType(typeof(List<{{ .Entity.Name }}Dto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<{{ .Entity.Name }}Dto>>> GetAll(CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("GET: Retrieving all {{ pluralize .Entity.Name | lowercase }}");
+
+        try
+        {
+            var entities = await _repository.GetAllAsync(cancellationToken);
+{{- if and .Permissions .Permissions.Read }}
+{{- if hasOwnershipToken .Permissions.Read }}
+            // Filter by ownership for @-token permissions
+            if (!_permissionService.HasAnyRole(PermissionPolicies.{{ .Entity.Name }}Permissions.Read.Where(r => !r.StartsWith("@"))))
+            {
+                entities = entities.Where(e => _permissionService.IsOwner(e)).ToList();
+            }
+{{- end }}
+{{- if and .Permissions.ReadPublic (hasPublicToken .Permissions.Read) }}
+            // If user only has public read access, apply ReadPublic filter
+            if (_permissionService.HasAnyRole(new[] { "*" }) && !_permissionService.HasAnyRole(PermissionPolicies.{{ .Entity.Name }}Permissions.Read.Where(r => r != "*")))
+            {
+                entities = entities.Where(e => {{ .Entity.Name }}.HasPublicReadAccess(e)).ToList();
+            }
+{{- end }}
+{{- end }}
+            var dtos = entities.Select(MapToDto).ToList();
+            return Ok(dtos);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving {{ pluralize .Entity.Name | lowercase }}");
+            return StatusCode(StatusCodes.Status500InternalServerError, "An error occurred while retrieving {{ pluralize .Entity.Name | lowercase }}");
+        }
+    }
+
+    /// <summary>
+    /// Get {{ .Entity.Name | lowercase }} by ID
+    /// </summary>
+{{- if .Permissions }}
+{{- if and .Permissions.Read (not (isPublicPermission .Permissions.Read)) }}
+    [Authorize(Policy = "{{ .Entity.Name }}Read")]
+{{- else }}
+    [AllowAnonymous]
+{{- end }}
+{{- else }}
+    [AllowAnonymous]
+{{- end }}
+    [HttpGet("{id}")]
+    [ProducesResponseType(typeof({{ .Entity.Name }}Dto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<{{ .Entity.Name }}Dto>> GetById(
+        {{ languageType .PrimaryKey.DatabaseType .PrimaryKey.IsNullable }} id,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("GET: Retrieving {{ .Entity.Name | lowercase }} with id {Id}", id);
+
+        try
+        {
+            var entity = await _repository.GetByIdAsync(id, cancellationToken);
+            if (entity == null)
+            {
+                return NotFound();
+            }
+
+{{- if and .Permissions .Permissions.Read }}
+{{- if hasOwnershipToken .Permissions.Read }}
+            // Check ownership for @-token read permissions
+            if (!_permissionService.HasAnyRole(PermissionPolicies.{{ .Entity.Name }}Permissions.Read.Where(r => !r.StartsWith("@"))))
+            {
+                if (!_permissionService.IsOwner(entity))
+                {
+                    return Forbid();
+                }
+            }
+{{- end }}
+{{- if and .Permissions.ReadPublic (hasPublicToken .Permissions.Read) }}
+            // If user only has public read access, apply ReadPublic filter
+            if (_permissionService.HasAnyRole(new[] { "*" }) && !_permissionService.HasAnyRole(PermissionPolicies.{{ .Entity.Name }}Permissions.Read.Where(r => r != "*")))
+            {
+                if (!{{ .Entity.Name }}.HasPublicReadAccess(entity))
+                {
+                    return NotFound();
+                }
+            }
+{{- end }}
+{{- end }}
+
+            return Ok(MapToDto(entity));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving {{ .Entity.Name | lowercase }} with id {Id}", id);
+            return StatusCode(StatusCodes.Status500InternalServerError, "An error occurred while retrieving the {{ .Entity.Name | lowercase }}");
+        }
+    }
+
+    /// <summary>
+    /// Create a new {{ .Entity.Name | lowercase }}
+    /// </summary>
+{{- if .Permissions }}
+{{- if and .Permissions.Create (not (isPublicPermission .Permissions.Create)) }}
+    [Authorize(Policy = "{{ .Entity.Name }}Create")]
+{{- else }}
+    [AllowAnonymous]
+{{- end }}
+{{- else }}
+    [AllowAnonymous]
+{{- end }}
+    [HttpPost]
+    [ProducesResponseType(typeof({{ .Entity.Name }}Dto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<{{ .Entity.Name }}Dto>> Create(
+        [FromBody] Create{{ .Entity.Name }}Request request,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("POST: Creating new {{ .Entity.Name | lowercase }}");
+
+        try
+        {
+            var entity = new {{ .Entity.Name }}
+            {
+{{- range .Entity.Fields }}
+{{- if and (not .IsPrimary) (not .IsRelation) (not .IsHidden) (not (isFeatureField .Name)) }}
+                {{ .Name | pascalcase }} = request.{{ .Name | pascalcase }},
+{{- end }}
+{{- end }}
+            };
+
+            // Set defaults for hidden required fields
+{{- range .Entity.Fields }}
+{{- if and .IsHidden (not .IsPrimary) (not .IsRelation) (not (isFeatureField .Name)) }}
+{{- if eq .DatabaseType "string" }}
+            entity.{{ .Name | pascalcase }} = entity.{{ .Name | pascalcase }} ?? "***";
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- if .HasAudit }}
+            entity.CreatedAt = DateTime.UtcNow;
+            entity.UpdatedAt = DateTime.UtcNow;
+{{- end }}
+
+            await _repository.AddAsync(entity, cancellationToken);
+            await _repository.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Created {{ .Entity.Name | lowercase }} with id {Id}", entity.{{ .PrimaryKey.Name | pascalcase }});
+            return CreatedAtAction(nameof(GetById), new { id = entity.{{ .PrimaryKey.Name | pascalcase }} }, MapToDto(entity));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating {{ .Entity.Name | lowercase }}");
+            return StatusCode(StatusCodes.Status500InternalServerError, "An error occurred while creating the {{ .Entity.Name | lowercase }}");
+        }
+    }
+
+    /// <summary>
+    /// Update an existing {{ .Entity.Name | lowercase }}
+    /// </summary>
+{{- if .Permissions }}
+{{- if and .Permissions.Update (not (isPublicPermission .Permissions.Update)) }}
+    [Authorize(Policy = "{{ .Entity.Name }}Update")]
+{{- else }}
+    [AllowAnonymous]
+{{- end }}
+{{- else }}
+    [AllowAnonymous]
+{{- end }}
+    [HttpPut("{id}")]
+    [ProducesResponseType(typeof({{ .Entity.Name }}Dto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<{{ .Entity.Name }}Dto>> Update(
+        {{ languageType .PrimaryKey.DatabaseType .PrimaryKey.IsNullable }} id,
+        [FromBody] Update{{ .Entity.Name }}Request request,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("PUT: Updating {{ .Entity.Name | lowercase }} with id {Id}", id);
+
+        try
+        {
+            var entity = await _repository.GetByIdAsync(id, cancellationToken);
+            if (entity == null)
+            {
+                return NotFound();
+            }
+
+{{- if and .Permissions .Permissions.Update }}
+{{- if hasOwnershipToken .Permissions.Update }}
+            // Check ownership for @-token update permissions
+            if (!_permissionService.HasAnyRole(PermissionPolicies.{{ .Entity.Name }}Permissions.Update.Where(r => !r.StartsWith("@"))))
+            {
+                if (!_permissionService.IsOwner(entity))
+                {
+                    return Forbid();
+                }
+            }
+{{- end }}
+{{- end }}
+
+{{- range .Entity.Fields }}
+{{- if and (not .IsPrimary) (not .IsRelation) (not .IsHidden) (not (isFeatureField .Name)) }}
+            entity.{{ .Name | pascalcase }} = request.{{ .Name | pascalcase }};
+{{- end }}
+{{- end }}
+
+{{- if .HasAudit }}
+            entity.UpdatedAt = DateTime.UtcNow;
+{{- end }}
+
+            _repository.Update(entity);
+            await _repository.SaveChangesAsync(cancellationToken);
+
+            return Ok(MapToDto(entity));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating {{ .Entity.Name | lowercase }} with id {Id}", id);
+            return StatusCode(StatusCodes.Status500InternalServerError, "An error occurred while updating the {{ .Entity.Name | lowercase }}");
+        }
+    }
+
+    /// <summary>
+    /// Delete a {{ .Entity.Name | lowercase }}
+    /// </summary>
+{{- if .Permissions }}
+{{- if and .Permissions.Delete (not (isPublicPermission .Permissions.Delete)) }}
+    [Authorize(Policy = "{{ .Entity.Name }}Delete")]
+{{- else }}
+    [AllowAnonymous]
+{{- end }}
+{{- else }}
+    [AllowAnonymous]
+{{- end }}
+    [HttpDelete("{id}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Delete(
+        {{ languageType .PrimaryKey.DatabaseType .PrimaryKey.IsNullable }} id,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("DELETE: Deleting {{ .Entity.Name | lowercase }} with id {Id}", id);
+
+        try
+        {
+            var entity = await _repository.GetByIdAsync(id, cancellationToken);
+            if (entity == null)
+            {
+                return NotFound();
+            }
+
+{{- if and .Permissions .Permissions.Delete }}
+{{- if hasOwnershipToken .Permissions.Delete }}
+            // Check ownership for @-token delete permissions
+            if (!_permissionService.HasAnyRole(PermissionPolicies.{{ .Entity.Name }}Permissions.Delete.Where(r => !r.StartsWith("@"))))
+            {
+                if (!_permissionService.IsOwner(entity))
+                {
+                    return Forbid();
+                }
+            }
+{{- end }}
+{{- end }}
+
+{{- if .HasSoftDelete }}
+            entity.DeletedAt = DateTime.UtcNow;
+            _repository.Update(entity);
+{{- else }}
+            _repository.Delete(entity);
+{{- end }}
+            await _repository.SaveChangesAsync(cancellationToken);
+
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting {{ .Entity.Name | lowercase }} with id {Id}", id);
+            return StatusCode(StatusCodes.Status500InternalServerError, "An error occurred while deleting the {{ .Entity.Name | lowercase }}");
+        }
+    }
+
+    // ===== DTOs =====
+
+    /// <summary>
+    /// DTO for {{ .Entity.Name }} responses
+    /// </summary>
+    public class {{ .Entity.Name }}Dto
+    {
+{{- range .Entity.Fields }}
+{{- if and (not .IsHidden) (not (isFeatureField .Name)) }}
+{{- if .IsRelation }}
+{{- if .IsMany }}
+        public List<Guid> {{ .Name | pascalcase }} { get; set; } = new();
+{{- else }}
+{{- $fkName := .Name | pascalcase }}
+{{- if not (hasSuffix "Id" $fkName) }}
+{{- $fkName = print $fkName "Id" }}
+{{- end }}
+        public {{ languageType .DatabaseType .IsNullable }} {{ $fkName }} { get; set; }
+{{- end }}
+{{- else }}
+        public {{ languageType .DatabaseType .IsNullable }} {{ .Name | pascalcase }} { get; set; }
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if .HasAudit }}
+        public DateTime CreatedAt { get; set; }
+        public DateTime UpdatedAt { get; set; }
+{{- end }}
+{{- if .HasSoftDelete }}
+        public DateTime? DeletedAt { get; set; }
+{{- end }}
+{{- if .HasOptimisticLock }}
+        public int Version { get; set; }
+{{- end }}
+    }
+
+    /// <summary>
+    /// Request model for creating {{ .Entity.Name }}
+    /// </summary>
+    public class Create{{ .Entity.Name }}Request
+    {
+{{- range .Entity.Fields }}
+{{- if and (not .IsPrimary) (not .IsRelation) (not .IsHidden) (not (isFeatureField .Name)) }}
+{{- if not .IsNullable }}
+        [Required]
+{{- end }}
+{{- if and (eq .DatabaseType "string") (.HasValidation "email") }}
+        [EmailAddress]
+{{- end }}
+{{- if and (eq .DatabaseType "string") (.HasValidation "max") }}
+        [StringLength({{ .ValidationValue "max" }}{{ if .HasValidation "min" }}, MinimumLength = {{ .ValidationValue "min" }}{{ end }})]
+{{- end }}
+        public {{ languageType .DatabaseType .IsNullable }} {{ .Name | pascalcase }} { get; set; }
+{{- end }}
+{{- end }}
+    }
+
+    /// <summary>
+    /// Request model for updating {{ .Entity.Name }}
+    /// </summary>
+    public class Update{{ .Entity.Name }}Request
+    {
+{{- range .Entity.Fields }}
+{{- if and (not .IsPrimary) (not .IsRelation) (not .IsHidden) (not (isFeatureField .Name)) }}
+{{- if not .IsNullable }}
+        [Required]
+{{- end }}
+{{- if and (eq .DatabaseType "string") (.HasValidation "email") }}
+        [EmailAddress]
+{{- end }}
+{{- if and (eq .DatabaseType "string") (.HasValidation "max") }}
+        [StringLength({{ .ValidationValue "max" }}{{ if .HasValidation "min" }}, MinimumLength = {{ .ValidationValue "min" }}{{ end }})]
+{{- end }}
+        public {{ languageType .DatabaseType .IsNullable }} {{ .Name | pascalcase }} { get; set; }
+{{- end }}
+{{- end }}
+    }
+
+    // ===== Mapping =====
+
+    private static {{ .Entity.Name }}Dto MapToDto({{ .Entity.Name }} entity) => new()
+    {
+{{- range .Entity.Fields }}
+{{- if and (not .IsHidden) (not (isFeatureField .Name)) }}
+{{- if .IsRelation }}
+{{- if .IsMany }}
+        {{ .Name | pascalcase }} = entity.{{ .Name | pascalcase }}?.Select(x => x.Id).ToList() ?? new(),
+{{- else }}
+{{- $fkName := .Name | pascalcase }}
+{{- if not (hasSuffix "Id" $fkName) }}
+{{- $fkName = print $fkName "Id" }}
+{{- end }}
+        {{ $fkName }} = entity.{{ $fkName }},
+{{- end }}
+{{- else }}
+        {{ .Name | pascalcase }} = entity.{{ .Name | pascalcase }},
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if .HasAudit }}
+        CreatedAt = entity.CreatedAt,
+        UpdatedAt = entity.UpdatedAt,
+{{- end }}
+{{- if .HasSoftDelete }}
+        DeletedAt = entity.DeletedAt,
+{{- end }}
+{{- if .HasOptimisticLock }}
+        Version = entity.Version,
+{{- end }}
+    };
+}

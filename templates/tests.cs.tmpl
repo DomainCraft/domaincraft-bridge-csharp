@@ -1,0 +1,297 @@
+{{- $proj := .Project.Name | pascalcase }}
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Xunit;
+using {{ $proj }}.Domain.Entities;
+using {{ $proj }}.Infrastructure.Persistence;
+using {{ $proj }}.Infrastructure.Persistence.Seeders;
+
+namespace {{ $proj }}.Tests;
+
+/// <summary>
+/// Auto-generated integration tests for the {{ $proj }} API.
+/// Each test expects a specific HTTP status code based on entity permissions.
+/// </summary>
+public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLifetime
+{
+    private readonly WebApplicationFactory<Program> _factory;
+    private readonly HttpClient _client;
+    private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private readonly Dictionary<string, Guid> _createdIds = new();
+    private readonly string _dbName = Guid.NewGuid().ToString();
+
+    public ApiTests(WebApplicationFactory<Program> factory)
+    {
+        _factory = factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Testing");
+
+            builder.ConfigureAppConfiguration((context, config) =>
+            {
+                // Provide test configuration values
+                config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Jwt:Secret"] = "TestSecretKey123456789012345678901234567890",
+                    ["Jwt:Issuer"] = "test-issuer",
+                    ["Jwt:Audience"] = "test-audience",
+                    ["ConnectionStrings:PostgreSQL"] = "Host=localhost;Database=test",
+                    ["ConnectionStrings:Redis"] = "",
+                });
+            });
+
+            builder.ConfigureServices(services =>
+            {
+                // Remove real database and seeder
+                var descriptors = services.Where(d =>
+                    d.ServiceType == typeof(DbContextOptions<DomainDbContext>) ||
+                    d.ServiceType == typeof(DomainDbContext) ||
+                    d.ImplementationType == typeof(DomainSeeder))
+                    .ToList();
+                foreach (var d in descriptors) services.Remove(d);
+
+                // Replace with in-memory database
+                services.AddDbContext<DomainDbContext>(options =>
+                {
+                    options.UseInMemoryDatabase(_dbName);
+                });
+
+                // Remove the ICacheService registration and add a no-op one
+                var cacheDescriptors = services.Where(d =>
+                    d.ServiceType?.Name == "ICacheService")
+                    .ToList();
+                foreach (var d in cacheDescriptors) services.Remove(d);
+                services.AddSingleton<{{ $proj }}.Application.Caching.ICacheService, {{ $proj }}.Tests.NoOpCacheService>();
+            });
+        });
+        _client = _factory.CreateClient();
+
+        using var scope = _factory.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<DomainDbContext>();
+        context.Database.EnsureCreated();
+    }
+
+    public async Task InitializeAsync() => await SeedTestEntities();
+    public Task DisposeAsync() => Task.CompletedTask;
+
+    private async Task SeedTestEntities()
+    {
+        // Create entities without required FK dependencies first
+{{- range .Project.Entities }}
+{{- $hasRequiredFK := false }}
+{{- range .Fields }}
+{{- if and .IsRelation (not .IsNullable) (not .IsMany) }}
+{{- $hasRequiredFK = true }}
+{{- end }}
+{{- end }}
+{{- if not $hasRequiredFK }}
+        await Create{{ .Name }}Async();
+{{- end }}
+{{- end }}
+        // Then create entities with required FK dependencies
+{{- range .Project.Entities }}
+{{- $hasRequiredFK := false }}
+{{- range .Fields }}
+{{- if and .IsRelation (not .IsNullable) (not .IsMany) }}
+{{- $hasRequiredFK = true }}
+{{- end }}
+{{- end }}
+{{- if $hasRequiredFK }}
+        await Create{{ .Name }}Async();
+{{- end }}
+{{- end }}
+    }
+
+{{/* Helper: check if permission list is public */}}
+{{/* Generate Create methods for all entities */}}
+{{- range .Project.Entities }}
+{{- $entity := . }}
+
+    private async Task Create{{ .Name }}Async()
+    {
+        var request = new
+        {
+{{- range .Fields }}
+{{- if and (not .IsPrimary) (not .IsMany) }}
+{{- if .IsRelation }}
+{{- if .IsNullable }}
+            {{ .Name | pascalcase }} = _createdIds.ContainsKey("{{ .RelationTarget }}") ? _createdIds["{{ .RelationTarget }}"] : (Guid?)null,
+{{- else }}
+            {{ .Name | pascalcase }} = _createdIds.GetValueOrDefault("{{ .RelationTarget }}"),
+{{- end }}
+{{- else if not (isFeatureField .Name) }}
+{{- if eq .DatabaseType "uuid" }}
+            {{ .Name | pascalcase }} = Guid.NewGuid(),
+{{- else if eq .DatabaseType "string" }}
+{{- if .HasValidation "email" }}
+            {{ .Name | pascalcase }} = "test@example.com",
+{{- else if .HasValidation "url" }}
+            {{ .Name | pascalcase }} = "https://example.com",
+{{- else if .DefaultValue }}
+            {{ .Name | pascalcase }} = "{{ .DefaultValue }}",
+{{- else }}
+            {{ .Name | pascalcase }} = "test_{{ .Name | lowercase }}",
+{{- end }}
+{{- else if eq .DatabaseType "int" }}
+            {{ .Name | pascalcase }} = 1,
+{{- else if eq .DatabaseType "float64" }}
+            {{ .Name | pascalcase }} = 1.0,
+{{- else if eq .DatabaseType "bool" }}
+            {{ .Name | pascalcase }} = true,
+{{- else if eq .DatabaseType "decimal" }}
+            {{ .Name | pascalcase }} = 1.0m,
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/{{ .NamePlural | lowercase }}", request);
+        if (response.IsSuccessStatusCode)
+        {
+            var content = await response.Content.ReadFromJsonAsync<JsonElement>(_jsonOptions);
+            if (content.TryGetProperty("id", out var idProp) && idProp.GetGuid() is Guid id)
+            {
+                _createdIds["{{ .Name }}"] = id;
+            }
+        }
+    }
+{{- end }}
+
+    // ===== Health Check =====
+
+    [Fact]
+    public async Task HealthCheck_ReturnsOk()
+    {
+        var response = await _client.GetAsync("/health");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+{{ range .Project.Entities }}
+{{- $entity := . }}
+{{/* Determine expected status codes based on permissions */}}
+{{/* Default: public access when no permissions are defined */}}
+{{- $readPublic := true }}
+{{- $createPublic := true }}
+{{- $updatePublic := true }}
+{{- $deletePublic := true }}
+{{- if .Permissions }}
+{{- if .Permissions.Read }}
+{{- $readPublic = isPublicPermission .Permissions.Read }}
+{{- end }}
+{{- if .Permissions.Create }}
+{{- $createPublic = isPublicPermission .Permissions.Create }}
+{{- end }}
+{{- if .Permissions.Update }}
+{{- $updatePublic = isPublicPermission .Permissions.Update }}
+{{- end }}
+{{- if .Permissions.Delete }}
+{{- $deletePublic = isPublicPermission .Permissions.Delete }}
+{{- end }}
+{{- end }}
+
+    // ===== {{ .Name }} Tests =====
+
+    [Fact]
+    public async Task {{ .NamePlural }}_GetAll_{{ if $readPublic }}ReturnsOk{{ else }}ReturnsUnauthorized{{ end }}()
+    {
+        var response = await _client.GetAsync("/api/{{ .NamePlural | lowercase }}");
+{{- if $readPublic }}
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+{{- else }}
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+{{- end }}
+    }
+
+    [Fact]
+    public async Task {{ .NamePlural }}_GetById_NotFound_ReturnsNotFound()
+    {
+        var response = await _client.GetAsync("/api/{{ .NamePlural | lowercase }}/00000000-0000-0000-0000-000000000000");
+{{- if $readPublic }}
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+{{- else }}
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+{{- end }}
+    }
+
+    [Fact]
+    public async Task {{ .NamePlural }}_Create_{{ if $createPublic }}ReturnsCreated{{ else }}ReturnsUnauthorized{{ end }}()
+    {
+        var request = new
+        {
+{{- range .Fields }}
+{{- if and (not .IsPrimary) (not .IsMany) }}
+{{- if .IsRelation }}
+{{- if .IsNullable }}
+            {{ .Name | pascalcase }} = _createdIds.ContainsKey("{{ .RelationTarget }}") ? _createdIds["{{ .RelationTarget }}"] : (Guid?)null,
+{{- else }}
+            {{ .Name | pascalcase }} = _createdIds.GetValueOrDefault("{{ .RelationTarget }}"),
+{{- end }}
+{{- else if not (isFeatureField .Name) }}
+{{- if eq .DatabaseType "uuid" }}
+            {{ .Name | pascalcase }} = Guid.NewGuid(),
+{{- else if eq .DatabaseType "string" }}
+{{- if .HasValidation "email" }}
+            {{ .Name | pascalcase }} = "test@example.com",
+{{- else if .HasValidation "url" }}
+            {{ .Name | pascalcase }} = "https://example.com",
+{{- else if .DefaultValue }}
+            {{ .Name | pascalcase }} = "{{ .DefaultValue }}",
+{{- else }}
+            {{ .Name | pascalcase }} = "test_{{ .Name | lowercase }}",
+{{- end }}
+{{- else if eq .DatabaseType "int" }}
+            {{ .Name | pascalcase }} = 1,
+{{- else if eq .DatabaseType "float64" }}
+            {{ .Name | pascalcase }} = 1.0,
+{{- else if eq .DatabaseType "bool" }}
+            {{ .Name | pascalcase }} = true,
+{{- else if eq .DatabaseType "decimal" }}
+            {{ .Name | pascalcase }} = 1.0m,
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/{{ .NamePlural | lowercase }}", request);
+{{- if $createPublic }}
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+{{- else }}
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+{{- end }}
+    }
+
+    [Fact]
+    public async Task {{ .NamePlural }}_Delete_NotFound_{{ if $deletePublic }}ReturnsNotFound{{ else }}ReturnsUnauthorized{{ end }}()
+    {
+        var response = await _client.DeleteAsync("/api/{{ .NamePlural | lowercase }}/00000000-0000-0000-0000-000000000000");
+{{- if $deletePublic }}
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+{{- else }}
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+{{- end }}
+    }
+
+{{ end }}
+}
+
+/// <summary>
+/// No-op cache service for tests - avoids Redis dependency
+/// </summary>
+internal class NoOpCacheService : {{ $proj }}.Application.Caching.ICacheService
+{
+    public Task<T?> GetAsync<T>(string key, CancellationToken cancellationToken = default) => Task.FromResult<T?>(default);
+    public Task SetAsync<T>(string key, T value, TimeSpan? expiration = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task RemoveAsync(string key, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task RemoveByPrefixAsync(string prefix, CancellationToken cancellationToken = default) => Task.CompletedTask;
+}

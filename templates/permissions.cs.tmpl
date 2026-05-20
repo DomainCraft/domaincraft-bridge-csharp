@@ -1,21 +1,34 @@
-namespace Generated.{{ .Project.Name | pascalcase }}.Application.Security;
+namespace {{ .Project.Name | pascalcase }}.Application.Security;
 
+/// <summary>
+/// Permission policies for entities based on RBAC (Role-Based Access Control)
+/// </summary>
 public static class PermissionPolicies
 {
 {{- range .Project.Entities }}
 {{- if .Permissions }}
-    public static class {{ .Name | pascalcase }}Permissions
+    /// <summary>
+    /// Permissions for {{ .Name }} entity
+    /// </summary>
+    public static class {{ .Name }}Permissions
     {
 {{- if .Permissions.Read }}
+        /// <summary>Roles allowed to read {{ .NamePlural | lowercase }}</summary>
         public static readonly string[] Read = new[] { {{- range $i, $role := .Permissions.Read }}{{ if $i }}, {{ end }}"{{ $role }}"{{- end }} };
 {{- end }}
+
 {{- if .Permissions.Create }}
+        /// <summary>Roles allowed to create {{ .NamePlural | lowercase }}</summary>
         public static readonly string[] Create = new[] { {{- range $i, $role := .Permissions.Create }}{{ if $i }}, {{ end }}"{{ $role }}"{{- end }} };
 {{- end }}
+
 {{- if .Permissions.Update }}
+        /// <summary>Roles allowed to update {{ .NamePlural | lowercase }}</summary>
         public static readonly string[] Update = new[] { {{- range $i, $role := .Permissions.Update }}{{ if $i }}, {{ end }}"{{ $role }}"{{- end }} };
 {{- end }}
+
 {{- if .Permissions.Delete }}
+        /// <summary>Roles allowed to delete {{ .NamePlural | lowercase }}</summary>
         public static readonly string[] Delete = new[] { {{- range $i, $role := .Permissions.Delete }}{{ if $i }}, {{ end }}"{{ $role }}"{{- end }} };
 {{- end }}
     }

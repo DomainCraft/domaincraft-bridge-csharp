@@ -1,0 +1,80 @@
+{{- $proj := .Project.Name | pascalcase }}
+using System.Linq.Expressions;
+using Microsoft.EntityFrameworkCore;
+using {{ $proj }}.Domain.Entities;
+using {{ $proj }}.Application.Repositories;
+using {{ $proj }}.Infrastructure.Persistence;
+
+namespace {{ $proj }}.Infrastructure.Repositories;
+
+/// <summary>
+/// EF Core repository implementation for {{ .Entity.Name }}
+/// </summary>
+public class {{ .Entity.Name }}Repository : I{{ .Entity.Name }}Repository
+{
+    private readonly DomainDbContext _context;
+    private readonly DbSet<{{ .Entity.Name }}> _dbSet;
+
+    public {{ .Entity.Name }}Repository(DomainDbContext context)
+    {
+        _context = context;
+        _dbSet = context.Set<{{ .Entity.Name }}>();
+    }
+
+    public async Task<List<{{ .Entity.Name }}>> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        return await _dbSet.ToListAsync(cancellationToken);
+    }
+
+    public async Task<{{ .Entity.Name }}?> GetByIdAsync(object id, CancellationToken cancellationToken = default)
+    {
+        return await _dbSet.FindAsync(new[] { id }, cancellationToken);
+    }
+
+    public async Task<List<{{ .Entity.Name }}>> FindAsync(Expression<Func<{{ .Entity.Name }}, bool>> predicate, CancellationToken cancellationToken = default)
+    {
+        return await _dbSet.Where(predicate).ToListAsync(cancellationToken);
+    }
+
+    public async Task<bool> AnyAsync(Expression<Func<{{ .Entity.Name }}, bool>> predicate, CancellationToken cancellationToken = default)
+    {
+        return await _dbSet.AnyAsync(predicate, cancellationToken);
+    }
+
+    public async Task<int> CountAsync(Expression<Func<{{ .Entity.Name }}, bool>>? predicate = null, CancellationToken cancellationToken = default)
+    {
+        if (predicate == null)
+            return await _dbSet.CountAsync(cancellationToken);
+        return await _dbSet.CountAsync(predicate, cancellationToken);
+    }
+
+    public async Task AddAsync({{ .Entity.Name }} entity, CancellationToken cancellationToken = default)
+    {
+        await _dbSet.AddAsync(entity, cancellationToken);
+    }
+
+    public async Task AddRangeAsync(IEnumerable<{{ .Entity.Name }}> entities, CancellationToken cancellationToken = default)
+    {
+        await _dbSet.AddRangeAsync(entities, cancellationToken);
+    }
+
+    public void Update({{ .Entity.Name }} entity)
+    {
+        _dbSet.Update(entity);
+    }
+
+    public void Delete({{ .Entity.Name }} entity)
+    {
+        _dbSet.Remove(entity);
+    }
+
+    public void DeleteRange(IEnumerable<{{ .Entity.Name }}> entities)
+    {
+        _dbSet.RemoveRange(entities);
+    }
+
+    public async Task SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        await _context.SaveChangesAsync(cancellationToken);
+    }
+}

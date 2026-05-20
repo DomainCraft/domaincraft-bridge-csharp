@@ -1,46 +1,124 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using Generated.{{ .Project.Name | pascalcase }}.Domain.Entities;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using {{ .Project.Name | pascalcase }}.Domain.Entities;
 
-namespace Generated.{{ .Project.Name | pascalcase }}.Infrastructure.Persistence.Configurations;
+namespace {{ .Project.Name | pascalcase }}.Infrastructure.Persistence.Configurations;
 
+/// <summary>
+/// EF Core configuration for {{ .Entity.Name }}
+/// </summary>
 public class {{ .Entity.Name }}Configuration : IEntityTypeConfiguration<{{ .Entity.Name }}>
 {
     public void Configure(EntityTypeBuilder<{{ .Entity.Name }}> builder)
     {
-        builder.ToTable("{{ .Entity.NamePlural }}");
+        // Table
+        builder.ToTable("{{ .Entity.NamePlural | snakecase }}");
 
+        // Primary Key
 {{- range .Entity.Fields }}
 {{- if .IsPrimary }}
         builder.HasKey(e => e.{{ .Name | pascalcase }});
 {{- end }}
 {{- end }}
 
-{{- range .Entity.Indexes }}
-        builder.HasIndex(e => new { {{- range $i, $field := .Fields }}{{ if $i }}, {{ end }}e.{{ $field | pascalcase }}{{- end }} }){{ if .Unique }}.IsUnique(){{ end }};
-{{- end }}
-
+        // Properties
 {{- range .Entity.Fields }}
-{{- if and (not .IsRelation) (eq .DatabaseType "string") (.HasValidation "max") }}
-        builder.Property(e => e.{{ .Name | pascalcase }}).HasMaxLength({{ .ValidationValue "max" }});
+{{- if and (not .IsRelation) (not (isFeatureField .Name)) }}
+{{- if or (eq .DatabaseType "json") (eq .DatabaseType "jsonb") }}
+        builder.Property(e => e.{{ .Name | pascalcase }})
+            .HasConversion(
+                new ValueConverter<JsonDocument?, string>(
+                    v => v == null ? null : v.RootElement.GetRawText(),
+                    v => v == null ? null : JsonDocument.Parse(v, default)
+                )
+            );
+{{- else if eq .DatabaseType "string" }}
+{{- $maxLen := 255 }}
+{{- if .HasValidation "max" }}
+{{- $maxLen = .ValidationValue "max" }}
+{{- end }}
+        builder.Property(e => e.{{ .Name | pascalcase }})
+            .HasMaxLength({{ $maxLen }})
+{{- if not .IsNullable }}
+            .IsRequired()
+{{- end }};
+{{- else if .IsUnique }}
+        builder.HasIndex(e => e.{{ .Name | pascalcase }}).IsUnique();
+{{- end }}
 {{- end }}
 {{- end }}
 
-{{- range .Entity.RelationsOut }}
-{{- if .IsMany }}
-        builder.HasMany(e => e.{{ .FieldName | pascalcase }})
-            .WithMany(e => e.{{ .InverseNavName }});
-{{- else if eq .RelationType "one-to-one" }}
-        builder.HasOne(e => e.{{ .NavigationName }})
-            .WithOne()
-            .HasForeignKey<{{ $.Entity.Name }}>(e => e.{{ .FieldName | pascalcase }})
-            .OnDelete(DeleteBehavior.{{ deleteBehaviorName .OnDeleteBehavior }});
-{{- else }}
-        builder.HasOne(e => e.{{ .NavigationName }})
-            .WithMany(e => e.{{ .InverseNavName }})
-            .HasForeignKey(e => e.{{ .FieldName | pascalcase }})
-            .OnDelete(DeleteBehavior.{{ deleteBehaviorName .OnDeleteBehavior }});
+        // Indexes
+{{- range .Entity.Indexes }}
+        builder
+            .HasIndex(e => new { {{- range $i, $field := .Fields }}{{ if $i }}, {{ end }}e.{{ $field | pascalcase }}{{- end }} })
+            .HasDatabaseName("IX_{{ .Name | snakecase }}")
+{{- if .Unique }}
+            .IsUnique()
+{{- end }};
 {{- end }}
+
+        // Relations
+{{- range .Entity.RelationsOut }}
+{{- if not .IsMany }}
+        // {{ .FieldName }} -> {{ .TargetEntity.Name }}
+{{- $navName := .NavigationName | pascalcase }}
+{{- $fkName := .FieldName | pascalcase }}
+{{- if not (hasSuffix "Id" $fkName) }}
+{{- $fkName = print $fkName "Id" }}
+{{- end }}
+        builder
+            .HasOne(e => e.{{ $navName }})
+            .WithMany(e => e.{{ .InverseNavName | pascalcase }})
+            .HasForeignKey(e => e.{{ $fkName }})
+            .OnDelete(DeleteBehavior.{{ deleteBehaviorName .OnDeleteBehavior }})
+            .IsRequired({{ if .IsNullable }}false{{ else }}true{{ end }});
+{{- end }}
+{{- end }}
+
+        // Soft Delete Query Filter
+{{- $hasSoftDelete := .Entity.HasSoftDelete }}
+{{- $hasSoftNav := false }}
+{{- range .Entity.RelationsOut }}
+{{- if and .TargetEntity.HasSoftDelete (not .IsMany) }}
+{{- $hasSoftNav = true }}
+{{- end }}
+{{- end }}
+{{- if or $hasSoftDelete $hasSoftNav }}
+{{- $first := true }}
+        builder.HasQueryFilter(e =>
+{{- if $hasSoftDelete }}
+ e.DeletedAt == null{{ $first = false }}
+{{- end }}
+{{- range .Entity.RelationsOut }}
+{{- if and .TargetEntity.HasSoftDelete (not .IsMany) }}
+{{- if not $first }}
+            &&
+{{- end }}
+ e.{{ .NavigationName | pascalcase }}.DeletedAt == null{{ $first = false }}
+{{- end }}
+{{- end }}
+        );
+{{- end }}
+
+        // Audit properties
+{{- if .Entity.HasAudit }}
+        builder.Property(e => e.CreatedAt)
+            .HasDefaultValueSql("CURRENT_TIMESTAMP")
+            .ValueGeneratedOnAdd();
+
+        builder.Property(e => e.UpdatedAt)
+            .HasDefaultValueSql("CURRENT_TIMESTAMP")
+            .ValueGeneratedOnAddOrUpdate();
+{{- end }}
+
+        // Concurrency token
+{{- if .Entity.HasOptimisticLock }}
+        builder.Property(e => e.Version)
+            .IsConcurrencyToken()
+            .HasDefaultValue(1);
 {{- end }}
     }
 }

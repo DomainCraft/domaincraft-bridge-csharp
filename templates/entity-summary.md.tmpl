@@ -1,18 +1,67 @@
-# {{ .Entity.Name }}
+# {{ .Entity.Name }} Entity
 
-Plural: {{ .Entity.NamePlural }}
+## Overview
+- **Plural Name:** {{ .Entity.NamePlural }}
+- **Table Name:** `{{ .Entity.NamePlural | snakecase }}`
+- **Features:** {{ if .HasAudit }}Audit, {{ end }}{{ if .HasSoftDelete }}Soft Delete, {{ end }}{{ if .HasOptimisticLock }}Optimistic Lock{{ end }}
 
 ## Fields
+
+| Field | Type | Required | Nullable | Primary | Hidden | Details |
+|-------|------|----------|----------|---------|--------|---------|
 {{- range .Entity.Fields }}
-- {{ .Name }}: {{ .DatabaseType }}{{ if .IsNullable }} (nullable){{ end }}{{ if .IsPrimary }} [primary]{{ end }}{{ if .IsHidden }} [hidden]{{ end }}
+| `{{ .Name }}` | `{{ languageType .DatabaseType .IsNullable }}` | {{ if .IsNullable }}No{{ else }}Yes{{ end }} | {{ if .IsNullable }}Yes{{ else }}No{{ end }} | {{ if .IsPrimary }}✓{{ else }}-{{ end }} | {{ if .IsHidden }}✓{{ else }}-{{ end }} | {{ if .IsUnique }}Unique{{ end }} {{ if .DefaultValue }}Default: `{{ .DefaultValue }}`{{ end }} |
 {{- end }}
 
-## Relations Out
+## Relationships
+
+### Outgoing Relations
 {{- range .Entity.RelationsOut }}
-- {{ .FieldName }} -> {{ .TargetEntity.Name }} via {{ .NavigationName }} ({{ .RelationType }})
+- **{{ .FieldName }}** → **{{ .TargetEntity.Name }}** ({{ .RelationType }})
+	- Navigation: `{{ .NavigationName }}`
+	- On Delete: `{{ .OnDeleteBehavior }}`
 {{- end }}
 
-## Relations In
+### Incoming Relations
 {{- range .Entity.RelationsIn }}
-- {{ .TargetEntity.Name }} -> {{ .InverseNavName }} ({{ .RelationType }})
+- **{{ .TargetEntity.Name }}** → This Entity ({{ .RelationType }})
+	- Navigation: `{{ .InverseNavName }}`
+{{- end }}
+
+## Indexes
+{{- range .Entity.Indexes }}
+- **{{ .Name }}** on [{{- range $i, $field := .Fields }}{{ if $i }}, {{ end }}`{{ $field }}`{{- end }}]{{ if .Unique }} (Unique){{ end }}
+{{- end }}
+
+## Permissions
+{{- if .Permissions }}
+| Operation | Roles | Details |
+|-----------|-------|---------|
+{{- if .Permissions.Read }}
+| Read | {{ join ", " .Permissions.Read }} | View {{ .NamePlural | lowercase }} |
+{{- end }}
+{{- if .Permissions.Create }}
+| Create | {{ join ", " .Permissions.Create }} | Create new {{ .Name | lowercase }} |
+{{- end }}
+{{- if .Permissions.Update }}
+| Update | {{ join ", " .Permissions.Update }} | Update existing {{ .Name | lowercase }} |
+{{- end }}
+{{- if .Permissions.Delete }}
+| Delete | {{ join ", " .Permissions.Delete }} | Delete {{ .Name | lowercase }} |
+{{- end }}
+{{- end }}
+
+## API Endpoints
+
+- `GET /api/{{ pluralize .Entity.Name | lowercase }}` - Get all {{ pluralize .Entity.Name | lowercase }}
+- `GET /api/{{ pluralize .Entity.Name | lowercase }}/{id}` - Get {{ .Entity.Name | lowercase }} by ID
+- `POST /api/{{ pluralize .Entity.Name | lowercase }}` - Create new {{ .Entity.Name | lowercase }}
+- `PUT /api/{{ pluralize .Entity.Name | lowercase }}/{id}` - Update {{ .Entity.Name | lowercase }}
+- `DELETE /api/{{ pluralize .Entity.Name | lowercase }}/{id}` - Delete {{ .Entity.Name | lowercase }}
+
+## Seed Data
+{{- if .Seed }}
+{{ len .Seed }} records are seeded on application startup.
+{{- else }}
+No seed data defined.
 {{- end }}

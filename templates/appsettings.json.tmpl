@@ -1,0 +1,26 @@
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft": "Warning",
+      "Microsoft.EntityFrameworkCore": "Information"
+    }
+  },
+  "ConnectionStrings": {
+    "PostgreSQL": "Host=localhost;Port=5432;Database={{ .Project.Name | snakecase }}_db;Username=postgres;Password=postgres;Include Error Detail=true;",
+    "Redis": "localhost:6379"
+  },
+  "Jwt": {
+    "Secret": "your-super-secret-jwt-key-change-this-in-production-must-be-at-least-32-characters",
+    "Issuer": "{{ .Project.Name }}-api",
+    "Audience": "{{ .Project.Name }}-client",
+    "ExpirationMinutes": 60
+  },
+  "AllowedHosts": "*",
+  "Cors": {
+    "AllowedOrigins": [
+      "http://localhost:3000",
+      "http://localhost:5173"
+    ]
+  }
+}

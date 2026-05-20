@@ -1,28 +1,17 @@
-using System;
+{{- $proj := .Project.Name | pascalcase }}
 using Microsoft.Extensions.DependencyInjection;
-using Application.Repositories;
-using Application.Security;
-using Infrastructure.Persistence.Seeders;
+using {{ $proj }}.Application.Caching;
+using {{ $proj }}.Application.Security;
 
-namespace Infrastructure.DependencyInjection;
+namespace {{ $proj }}.Application;
 
-public static class ServiceRegistration
+public static class DependencyInjection
 {
-    public static IServiceCollection AddGeneratedDomainServices(this IServiceCollection services)
+    public static IServiceCollection AddApplicationServices(this IServiceCollection services)
     {
-        if (services == null) throw new ArgumentNullException(nameof(services));
-
-        // Register permission and owner services (bridge can replace these)
-        services.AddScoped<IOwnerResolver, OwnerResolver>();
+        // Security
         services.AddScoped<IPermissionService, PermissionService>();
-
-        // Register repositories
-{{- range .Project.Entities }}
-        services.AddScoped<I{{ .Name }}Repository, {{ .Name }}Repository>();
-{{- end }}
-
-        // Register seeder
-        services.AddScoped<DomainSeeder>();
+        services.AddScoped<IOwnerResolver, OwnerResolver>();
 
         return services;
     }

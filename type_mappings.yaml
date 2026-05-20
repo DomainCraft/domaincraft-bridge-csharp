@@ -1,13 +1,70 @@
 types:
-  string: string
-  int: int
-  int64: long
-  float64: double
-  bool: bool
-  time.Time: DateTime
+  # Primitives
+  string: "string"
+  int: "int"
+  int64: "long"
+  bigint: "long"
+  float: "double"
+  float64: "double"
+  bool: "bool"
+  boolean: "bool"
 
+  # Date/Time
+  date: "DateTime"
+  datetime: "DateTime"
+  "time.Time": "DateTime"
+
+  # UUID
+  uuid: "Guid"
+
+  # JSON
+  json: "JsonDocument"
+  jsonb: "JsonDocument"
+
+  # Decimal
+  decimal: "decimal"
+
+  # Text (long strings)
+  text: "string"
+
+  # Array types
+  "array(string)": "List<string>"
+  "array(int)": "List<int>"
+  "array(long)": "List<long>"
+  "[]string": "List<string>"
+  "[]int": "List<int>"
+  "[]int64": "List<long>"
+  "[]float64": "List<double>"
+  "[]bool": "List<bool>"
+
+# Value types that require nullable suffix (?) for null values
+value_types:
+  - "int"
+  - "long"
+  - "double"
+  - "decimal"
+  - "bool"
+  - "DateTime"
+  - "Guid"
+
+# Delete behaviors
 behaviors:
-  cascade: Cascade
-  set_null: SetNull
-  restrict: Restrict
-  no_action: NoAction
+  cascade: "Cascade"
+  set_null: "SetNull"
+  restrict: "Restrict"
+  no_action: "NoAction"
+
+# Database mappings (PostgreSQL specific)
+database_types:
+  string: "VARCHAR(255)"
+  int: "INTEGER"
+  long: "BIGINT"
+  double: "DOUBLE PRECISION"
+  decimal: "NUMERIC"
+  bool: "BOOLEAN"
+  DateTime: "TIMESTAMP"
+  text: "TEXT"
+  json: "JSONB"
+  Guid: "UUID"
+  List<string>: "TEXT[]"
+  List<int>: "INTEGER[]"

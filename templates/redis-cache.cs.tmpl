@@ -1,0 +1,87 @@
+using System.Text.Json;
+using Microsoft.Extensions.Caching.Distributed;
+using {{ .Project.Name | pascalcase }}.Application.Caching;
+using Microsoft.Extensions.Logging;
+
+namespace {{ .Project.Name | pascalcase }}.Infrastructure.Caching;
+
+/// <summary>
+/// Redis-based distributed cache implementation
+/// </summary>
+public class RedisCacheService : ICacheService
+{
+    private readonly IDistributedCache _cache;
+    private readonly ILogger<RedisCacheService> _logger;
+
+    public RedisCacheService(IDistributedCache cache, ILogger<RedisCacheService> logger)
+    {
+        _cache = cache ?? throw new ArgumentNullException(nameof(cache));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    }
+
+    /// <inheritdoc/>
+    public async Task<T?> GetAsync<T>(string key, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var cached = await _cache.GetStringAsync(key, cancellationToken);
+            if (cached == null)
+            {
+                return default;
+            }
+
+            return JsonSerializer.Deserialize<T>(cached);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to get cached value for key {Key}", key);
+            return default;
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task SetAsync<T>(string key, T value, TimeSpan? expiration = null, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var options = new DistributedCacheEntryOptions();
+            if (expiration.HasValue)
+            {
+                options.AbsoluteExpirationRelativeToNow = expiration.Value;
+            }
+            else
+            {
+                options.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(30);
+            }
+
+            var serialized = JsonSerializer.Serialize(value);
+            await _cache.SetStringAsync(key, serialized, options, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to set cached value for key {Key}", key);
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task RemoveAsync(string key, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await _cache.RemoveAsync(key, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to remove cached value for key {Key}", key);
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task RemoveByPrefixAsync(string prefix, CancellationToken cancellationToken = default)
+    {
+        // Note: Redis doesn't support prefix deletion natively
+        // In production, consider using Redis SCAN with pattern matching
+        _logger.LogWarning("Prefix deletion not fully implemented for key prefix {Prefix}", prefix);
+        await Task.CompletedTask;
+    }
+}
