@@ -76,11 +76,11 @@ public class DomainSeeder
 {{- $field := lookupField $k $entity }}
 {{- if and $field (eq $field.DatabaseType "uuid") }}
                     {{ $k | pascalcase }} = Guid.Parse({{ jsonValue $v }}),
-{{- else if and $field (eq $field.DatabaseType "time.Time") }}
+{{- else if and $field (or (eq $field.DatabaseType "date") (eq $field.DatabaseType "datetime")) }}
                     {{ $k | pascalcase }} = DateTime.Parse({{ jsonValue $v }}),
 {{- else if and $field (or (eq $field.DatabaseType "json") (eq $field.DatabaseType "jsonb")) }}
                     {{ $k | pascalcase }} = JsonDocument.Parse({{ jsonValue $v }}, default),
-{{- else if and $field (or (eq $field.DatabaseType "float64") (eq $field.DatabaseType "decimal") (eq $field.DatabaseType "int") (eq $field.DatabaseType "int64") (eq $field.DatabaseType "bool")) }}
+{{- else if and $field (or (eq $field.DatabaseType "float") (eq $field.DatabaseType "decimal") (eq $field.DatabaseType "int") (eq $field.DatabaseType "bigint") (eq $field.DatabaseType "boolean")) }}
                     {{ $k | pascalcase }} = {{ rawSeedValue $v $field.DatabaseType }},
 {{- else }}
                     {{ $k | pascalcase }} = {{ jsonValue $v }},

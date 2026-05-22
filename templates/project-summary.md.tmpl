@@ -35,15 +35,15 @@ This is a **clean architecture** C# REST API project with the following layers:
 
 ## Data Types
 
-All Go types are mapped to C# types:
-- `string` → `string`
+Domain types are mapped to C# types:
+- `string` / `text` → `string`
 - `int` → `int`
-- `int64` → `long`
-- `float64` → `double`
-- `bool` → `bool`
-- `datetime` → `DateTime`
+- `bigint` → `long`
+- `float` / `decimal` → `double` / `decimal`
+- `boolean` → `bool`
+- `date` / `datetime` → `DateTime`
 - `uuid` → `Guid`
-- `json/jsonb` → `JsonDocument`
+- `json` / `jsonb` → `JsonDocument`
 
 ## Enumerations ({{ len .Project.Enums }})
 

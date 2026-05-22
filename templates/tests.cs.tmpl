@@ -143,9 +143,9 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
 {{- end }}
 {{- else if eq .DatabaseType "int" }}
             {{ .Name | pascalcase }} = 1,
-{{- else if eq .DatabaseType "float64" }}
+{{- else if eq .DatabaseType "float" }}
             {{ .Name | pascalcase }} = 1.0,
-{{- else if eq .DatabaseType "bool" }}
+{{- else if eq .DatabaseType "boolean" }}
             {{ .Name | pascalcase }} = true,
 {{- else if eq .DatabaseType "decimal" }}
             {{ .Name | pascalcase }} = 1.0m,
@@ -251,9 +251,9 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
 {{- end }}
 {{- else if eq .DatabaseType "int" }}
             {{ .Name | pascalcase }} = 1,
-{{- else if eq .DatabaseType "float64" }}
+{{- else if eq .DatabaseType "float" }}
             {{ .Name | pascalcase }} = 1.0,
-{{- else if eq .DatabaseType "bool" }}
+{{- else if eq .DatabaseType "boolean" }}
             {{ .Name | pascalcase }} = true,
 {{- else if eq .DatabaseType "decimal" }}
             {{ .Name | pascalcase }} = 1.0m,
