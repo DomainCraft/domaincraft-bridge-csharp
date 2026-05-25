@@ -19,19 +19,22 @@ services:
       timeout: 5s
       retries: 5
 
-  # Redis Cache
-  redis:
-    image: redis:7-alpine
-    container_name: {{ .Project.Name | snakecase }}-redis
+{{- if and .Project.Cache .Project.Cache.Enabled }}
+
+  # {{ .Project.Cache.Provider | default "redis" | title }} Cache
+  cache:
+    image: {{ if eq .Project.Cache.Provider "memcached" }}memcached:1-alpine{{ else }}redis:7-alpine{{ end }}
+    container_name: {{ .Project.Name | snakecase }}-cache
     ports:
-      - "6379:6379"
+      - "{{ if eq .Project.Cache.Provider "memcached" }}11211{{ else }}6379{{ end }}:{{ if eq .Project.Cache.Provider "memcached" }}11211{{ else }}6379{{ end }}"
     volumes:
-      - redis_data:/data
+      - cache_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "{{ if eq .Project.Cache.Provider "memcached" }}echo stats | nc localhost 11211{{ else }}redis-cli{{ end }}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+{{- end }}
 
   # Application
   api:
@@ -44,17 +47,23 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__PostgreSQL=Host=postgres;Database={{ .Project.Name }}_db;Username=postgres;Password=postgres
-      - ConnectionStrings__Redis=redis:6379
+{{- if and .Project.Cache .Project.Cache.Enabled .Project.Cache.ConnectionString }}
+      - ConnectionStrings__Redis={{ .Project.Cache.ConnectionString }}
+{{- end }}
       - Jwt__Secret=YourSuperSecretKeyThatIsAtLeast32CharactersLong!
       - Jwt__Issuer={{ .Project.Name }}
       - Jwt__Audience={{ .Project.Name | snakecase }}-api
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+{{- if and .Project.Cache .Project.Cache.Enabled }}
+      cache:
         condition: service_healthy
+{{- end }}
     restart: unless-stopped
 
 volumes:
   postgres_data:
-  redis_data:
+{{- if and .Project.Cache .Project.Cache.Enabled }}
+  cache_data:
+{{- end }}

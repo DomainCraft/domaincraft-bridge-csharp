@@ -7,8 +7,10 @@
     }
   },
   "ConnectionStrings": {
-    "PostgreSQL": "Host=localhost;Port=5432;Database={{ .Project.Name | snakecase }}_db;Username=postgres;Password=postgres;Include Error Detail=true;",
-    "Redis": "localhost:6379"
+    "PostgreSQL": "Host=localhost;Port=5432;Database={{ .Project.Name | snakecase }}_db;Username=postgres;Password=postgres;Include Error Detail=true;"
+{{- if and .Project.Cache .Project.Cache.Enabled .Project.Cache.ConnectionString }},
+    "Redis": "{{ .Project.Cache.ConnectionString }}"
+{{- end }}
   },
   "Jwt": {
     "Secret": "your-super-secret-jwt-key-change-this-in-production-must-be-at-least-32-characters",
@@ -16,11 +18,15 @@
     "Audience": "{{ .Project.Name }}-client",
     "ExpirationMinutes": 60
   },
-  "AllowedHosts": "*",
+  "AllowedHosts": "*"
+{{- if and .Project.CORS .Project.CORS.Enabled .Project.CORS.Origins }},
   "Cors": {
     "AllowedOrigins": [
-      "http://localhost:3000",
-      "http://localhost:5173"
+{{- range $i, $origin := .Project.CORS.Origins }}
+{{- if $i }},{{ end }}
+      "{{ $origin }}"
+{{- end }}
     ]
   }
+{{- end }}
 }

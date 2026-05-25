@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>{{ or .Project.Platform "net10.0" }}</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>{{ .Project.Name | pascalcase }}.Infrastructure</RootNamespace>
@@ -13,12 +13,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.4" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.4" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.4" />
-    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.4" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
-    <PackageReference Include="StackExchange.Redis" Version="2.7.33" />
-    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="8.0.4" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="{{ index .Packages "ef_core" }}" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="{{ index .Packages "ef_core_design" }}" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="{{ index .Packages "ef_core_relational" }}" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="{{ index .Packages "npgsql_ef" }}" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="{{ index .Packages "logging_abstractions" }}" />
+    <PackageReference Include="StackExchange.Redis" Version="{{ index .Packages "stackexchange_redis" }}" />
+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="{{ index .Packages "redis_cache" }}" />
   </ItemGroup>
 </Project>

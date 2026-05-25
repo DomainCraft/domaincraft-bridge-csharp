@@ -4,6 +4,7 @@ using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using {{ .Project.Name | pascalcase }}.Domain.Shared;
 
 namespace {{ .Project.Name | pascalcase }}.Domain.Entities;
 
@@ -30,22 +31,19 @@ public class {{ .Entity.Name }}
 
 {{- else }}
     /// <summary>Foreign Key to {{ .RelationTarget }}</summary>
-{{- $fkName := .Name | pascalcase }}
-{{- if not (hasSuffix "Id" $fkName) }}
-{{- $fkName = print $fkName "Id" }}
-{{- end }}
-{{- $navName := $fkName | trimSuffix "Id" }}
+{{- $fk := fkName .Name | pascalcase }}
+{{- $navName := $fk | trimSuffix "Id" }}
 {{- if eq $navName "" }}{{ $navName = .RelationTarget }}{{ end }}
 {{- if .IsNullable }}
     [JsonPropertyName("{{ .Name | camelcase }}")]
-    public {{ languageType .DatabaseType .IsNullable }} {{ $fkName }} { get; set; }
+    public {{ languageType .DatabaseType .IsNullable }} {{ $fk }} { get; set; }
 {{- else }}
     [Required]
     [JsonPropertyName("{{ .Name | camelcase }}")]
-    public {{ languageType .DatabaseType .IsNullable }} {{ $fkName }} { get; set; } = default!;
+    public {{ languageType .DatabaseType .IsNullable }} {{ $fk }} { get; set; } = default!;
 {{- end }}
 
-    [ForeignKey("{{ $fkName }}")]
+    [ForeignKey("{{ $fk }}")]
     public virtual {{ .RelationTarget }} {{ $navName }} { get; set; } = default!;
 
 {{- end }}
@@ -53,24 +51,7 @@ public class {{ .Entity.Name }}
 {{- if .IsHidden }}
     [JsonIgnore]
 {{- end }}
-{{- if and (not .IsNullable) (ne .DatabaseType "json") (ne .DatabaseType "jsonb") }}
-    [Required]
-{{- end }}
-{{- if and (eq .DatabaseType "string") (.HasValidation "email") }}
-    [EmailAddress(ErrorMessage = "Invalid email address")]
-{{- end }}
-{{- if and (eq .DatabaseType "string") (.HasValidation "url") }}
-    [Url(ErrorMessage = "Invalid URL")]
-{{- end }}
-{{- if and (eq .DatabaseType "string") (.HasValidation "regex") }}
-{{- $regex := .ValidationValue "regex" }}
-{{- if and $regex (ne $regex "^") }}
-    [RegularExpression("{{ $regex }}", ErrorMessage = "Invalid format")]
-{{- end }}
-{{- end }}
-{{- if and (eq .DatabaseType "string") (or (.HasValidation "min") (.HasValidation "max")) }}
-    [StringLength({{ if .HasValidation "max" }}{{ .ValidationValue "max" }}{{ else }}int.MaxValue{{ end }}, MinimumLength = {{ if .HasValidation "min" }}{{ .ValidationValue "min" }}{{ else }}0{{ end }})]
-{{- end }}
+{{- template "validationAttributes" . }}
 {{- $nullable := or .IsNullable (eq .DatabaseType "json") (eq .DatabaseType "jsonb") }}
     public {{ languageType .DatabaseType $nullable }} {{ .Name | pascalcase }} { get; set; }{{ if and (not $nullable) (isValueType .DatabaseType) }}{{ else if not $nullable }} = default!;{{ end }}
 
@@ -95,6 +76,15 @@ public class {{ .Entity.Name }}
 
 {{- end }}
 
+{{- if .HasAuditLog }}
+    /// <summary>Audit log: User that created the entity</summary>
+    public Guid CreatedBy { get; set; }
+
+    /// <summary>Audit log: User that last updated the entity</summary>
+    public Guid UpdatedBy { get; set; }
+
+{{- end }}
+
 {{- if .HasSoftDelete }}
     /// <summary>Soft Delete: Logical deletion timestamp</summary>
     public DateTime? DeletedAt { get; set; }
@@ -108,17 +98,5 @@ public class {{ .Entity.Name }}
 
 {{- end }}
 
-{{- if and .Permissions .Permissions.ReadPublic }}
-    /// <summary>
-    /// ReadPublic filter: {{ .Permissions.ReadPublic }}
-    /// Applied when user has only public (*) read access
-    /// </summary>
-    public static bool HasPublicReadAccess({{ .Entity.Name }} entity)
-    {
-        // TODO: Implement condition: {{ .Permissions.ReadPublic }}
-        return true;
-    }
-
-{{- end }}
     public override string ToString() => $"{{ .Entity.Name }}(Id={ {{- if .PrimaryKey }}{{ .PrimaryKey.Name | pascalcase }}{{- end }} })";
 }

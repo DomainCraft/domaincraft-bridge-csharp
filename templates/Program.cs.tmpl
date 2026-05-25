@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi.Models;
+using Microsoft.OpenApi;
 using {{ .Project.Name | pascalcase }}.Application;
 using {{ .Project.Name | pascalcase }}.Application.Caching;
 using {{ .Project.Name | pascalcase }}.Infrastructure;
@@ -86,13 +86,19 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddAuthorization(options =>
 {
-{{- range .Project.Entities }}
-{{- if .Permissions }}
-    // Policies for {{ .Name }}
-{{- if and .Permissions.Read (not (isPublicPermission .Permissions.Read)) }}
-    options.AddPolicy("{{ .Name }}Read", policy =>
+{{- range $op := list "Read" "Create" "Update" "Delete" }}
+{{- range $.Project.Entities }}
+{{- $perms := .Permissions }}
+{{- if $perms }}
+{{- $roles := "" -}}
+{{- if eq $op "Read" }}{{ $roles = $perms.Read }}{{ end -}}
+{{- if eq $op "Create" }}{{ $roles = $perms.Create }}{{ end -}}
+{{- if eq $op "Update" }}{{ $roles = $perms.Update }}{{ end -}}
+{{- if eq $op "Delete" }}{{ $roles = $perms.Delete }}{{ end -}}
+{{- if and $roles (not (isPublicPermission $roles)) }}
+    options.AddPolicy("{{ .Name }}{{ $op }}", policy =>
     {
-{{- range .Permissions.Read }}
+{{- range $roles }}
 {{- if hasPrefix "@" . }}
         // Ownership-based: {{ . }} — resolved at runtime via IPermissionService
         policy.RequireAuthenticatedUser();
@@ -102,41 +108,6 @@ builder.Services.AddAuthorization(options =>
 {{- end }}
     });
 {{- end }}
-{{- if and .Permissions.Create (not (isPublicPermission .Permissions.Create)) }}
-    options.AddPolicy("{{ .Name }}Create", policy =>
-    {
-{{- range .Permissions.Create }}
-{{- if hasPrefix "@" . }}
-        policy.RequireAuthenticatedUser();
-{{- else if ne . "*" }}
-        policy.RequireRole("{{ . }}");
-{{- end }}
-{{- end }}
-    });
-{{- end }}
-{{- if and .Permissions.Update (not (isPublicPermission .Permissions.Update)) }}
-    options.AddPolicy("{{ .Name }}Update", policy =>
-    {
-{{- range .Permissions.Update }}
-{{- if hasPrefix "@" . }}
-        policy.RequireAuthenticatedUser();
-{{- else if ne . "*" }}
-        policy.RequireRole("{{ . }}");
-{{- end }}
-{{- end }}
-    });
-{{- end }}
-{{- if and .Permissions.Delete (not (isPublicPermission .Permissions.Delete)) }}
-    options.AddPolicy("{{ .Name }}Delete", policy =>
-    {
-{{- range .Permissions.Delete }}
-{{- if hasPrefix "@" . }}
-        policy.RequireAuthenticatedUser();
-{{- else if ne . "*" }}
-        policy.RequireRole("{{ . }}");
-{{- end }}
-{{- end }}
-    });
 {{- end }}
 {{- end }}
 {{- end }}
@@ -183,27 +154,36 @@ builder.Services.AddSwaggerGen(c =>
     };
 
     c.AddSecurityDefinition("Bearer", securityScheme);
-    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    c.AddSecurityRequirement(_ => new OpenApiSecurityRequirement
     {
-        {
-            new OpenApiSecurityScheme
-            {
-                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
-            },
-            Array.Empty<string>()
-        }
+        { new OpenApiSecuritySchemeReference("Bearer"), new List<string>() }
     });
 });
 
-// CORS (if needed)
+// CORS
 builder.Services.AddCors(options =>
 {
+{{- if and .Project.CORS .Project.CORS.Enabled .Project.CORS.Origins }}
+    options.AddPolicy("DomainCraftCors", policy =>
+    {
+        policy.WithOrigins(
+{{- range $i, $origin := .Project.CORS.Origins }}
+{{- if $i }},{{ end }}
+                "{{ $origin }}"
+{{- end }}
+            )
+            .AllowAnyMethod()
+            .AllowAnyHeader()
+            .AllowCredentials();
+    });
+{{- else }}
     options.AddPolicy("AllowAll", policy =>
     {
         policy.AllowAnyOrigin()
               .AllowAnyMethod()
               .AllowAnyHeader();
     });
+{{- end }}
 });
 
 var app = builder.Build();
@@ -222,7 +202,11 @@ if (!app.Environment.IsEnvironment("Testing"))
 {
     app.UseHttpsRedirection();
 }
+{{- if and .Project.CORS .Project.CORS.Enabled .Project.CORS.Origins }}
+app.UseCors("DomainCraftCors");
+{{- else }}
 app.UseCors("AllowAll");
+{{- end }}
 
 app.UseAuthentication();
 app.UseAuthorization();

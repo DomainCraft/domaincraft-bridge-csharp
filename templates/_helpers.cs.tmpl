@@ -1,0 +1,180 @@
+{{- /* Shared named templates for the C# bridge. Loaded via bridge.yaml "helpers" field. */ -}}
+
+{{- /* seedValueExpression converts a seed data value to a C# expression.
+     Context: dict with "Field" (IRField-like) and "Value" (the seed value).
+     Used by both seed-seeder.cs.tmpl and controller.cs.tmpl Seed action. */ -}}
+{{- define "seedValueExpression" -}}
+{{- $field := .Field -}}
+{{- $value := .Value -}}
+{{- if not $field -}}
+{{- jsonValue $value -}}
+{{- else -}}
+{{- $csType := languageType $field.DatabaseType false -}}
+{{- if hasPrefix $csType "List<" -}}
+{{- $innerType := trimSuffix ">" (trimPrefix "List<" $csType) -}}
+{{- if kindIs "slice" $value -}}
+new List<{{ $innerType }}> { {{- range $index, $item := $value -}}{{- if $index }}, {{ end -}}{{ template "seedValueExpression" (dict "Field" (dict "DatabaseType" $innerType) "Value" $item) }}{{- end -}} }
+{{- else -}}
+new List<{{ $innerType }}>()
+{{- end -}}
+{{- else if eq $csType "Guid" -}}
+Guid.Parse({{ jsonValue $value }})
+{{- else if eq $csType "DateTime" -}}
+DateTime.Parse({{ jsonValue $value }})
+{{- else if eq $csType "JsonDocument" -}}
+JsonDocument.Parse({{ jsonValue $value }}, default)
+{{- else if or (eq $csType "int") (eq $csType "long") (eq $csType "double") (eq $csType "decimal") (eq $csType "bool") -}}
+{{ rawSeedValue $value $field.DatabaseType }}
+{{- else if eq $csType "string" -}}
+{{ jsonValue $value }}
+{{- else -}}
+Enum.Parse<{{ $csType }}>({{ jsonValue $value }})
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* authAttribute emits the authorization attribute for a CRUD operation.
+     Context: dict with "Roles" ([]string, may be nil), "Entity" (string), "Op" (string).
+     When Roles is nil: emits nothing if entity has permissions defined, [Authorize] if no permissions.
+     When Roles is ["*"]: emits [AllowAnonymous].
+     Otherwise: emits [Authorize(Policy = "EntityOp")]. */ -}}
+{{- define "authAttribute" -}}
+{{- $roles := .Roles -}}
+{{- $entity := .Entity -}}
+{{- $op := .Op -}}
+{{- if $roles -}}
+{{- if isPublicPermission $roles }}
+    [AllowAnonymous]
+{{- else }}
+    [Authorize(Policy = "{{ $entity }}{{ $op }}")]
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{- /* authOrAuthorize emits auth attribute with fallback to [Authorize] when no perms defined.
+     Context: same as authAttribute. */ -}}
+{{- define "authOrAuthorize" -}}
+{{- $roles := .Roles -}}
+{{- $entity := .Entity -}}
+{{- $op := .Op -}}
+{{- $permsDefined := .PermsDefined -}}
+{{- if $roles -}}
+{{- if isPublicPermission $roles }}
+    [AllowAnonymous]
+{{- else }}
+    [Authorize(Policy = "{{ $entity }}{{ $op }}")]
+{{- end }}
+{{- else if not $permsDefined }}
+    [Authorize]
+{{- end }}
+{{- end -}}
+
+{{- /* validationAttributes emits [Required], [EmailAddress], [Url], [RegularExpression], [StringLength] attributes.
+     Context: IRField. */ -}}
+{{- define "validationAttributes" -}}
+{{- if and (not .IsNullable) (ne .DatabaseType "json") (ne .DatabaseType "jsonb") }}
+    [Required]
+{{- end }}
+{{- if and (eq .DatabaseType "string") (.HasValidation "email") }}
+    [EmailAddress(ErrorMessage = "Invalid email address")]
+{{- end }}
+{{- if and (eq .DatabaseType "string") (.HasValidation "url") }}
+    [Url(ErrorMessage = "Invalid URL")]
+{{- end }}
+{{- if and (eq .DatabaseType "string") (.HasValidation "regex") }}
+{{- $regex := .ValidationValue "regex" }}
+{{- if and $regex (ne $regex "^") }}
+    [RegularExpression("{{ $regex }}", ErrorMessage = "Invalid format")]
+{{- end }}
+{{- end }}
+{{- if and (eq .DatabaseType "string") (or (.HasValidation "min") (.HasValidation "max")) }}
+    [StringLength({{ if .HasValidation "max" }}{{ .ValidationValue "max" }}{{ else }}int.MaxValue{{ end }}, MinimumLength = {{ if .HasValidation "min" }}{{ .ValidationValue "min" }}{{ else }}0{{ end }})]
+{{- end }}
+{{- end -}}
+
+{{- /* dtoFieldProperties emits C# properties for a DTO field (used in Dto, CreateRequest, UpdateRequest).
+     Context: IRField (or dict with .Name, .IsRelation, .IsMany, .DatabaseType, .IsNullable, .IsHidden, .IsPrimary). */ -}}
+{{- define "dtoFieldProperties" -}}
+{{- if .IsRelation -}}
+{{- if .IsMany }}
+        [JsonPropertyName("{{ .Name | camelcase }}")]
+        public virtual ICollection<{{ .RelationTarget }}> {{ .Name | pascalcase }} { get; set; } = new List<{{ .RelationTarget }}>();
+{{- else }}
+        [JsonPropertyName("{{ .Name | camelcase }}")]
+        public {{ languageType .DatabaseType .IsNullable }} {{ fkName .Name | pascalcase }} { get; set; }
+{{- end -}}
+{{- else }}
+{{- if .IsHidden }}
+        [JsonIgnore]
+{{- end }}
+        [JsonPropertyName("{{ .Name | camelcase }}")]
+        public {{ languageType .DatabaseType .IsNullable }} {{ .Name | pascalcase }} { get; set; }
+{{- end -}}
+{{- end -}}
+
+{{- /* requestFieldProperties emits C# properties for Create/Update request DTOs with validation attributes.
+     Context: IRField. */ -}}
+{{- define "requestFieldProperties" -}}
+{{- if .IsRelation -}}
+{{- if not .IsMany }}
+        [JsonPropertyName("{{ .Name | camelcase }}")]
+        public {{ languageType .DatabaseType .IsNullable }} {{ fkName .Name | pascalcase }} { get; set; }
+{{- end -}}
+{{- else }}
+{{- template "validationAttributes" . }}
+        [JsonPropertyName("{{ .Name | camelcase }}")]
+        public {{ languageType .DatabaseType .IsNullable }} {{ .Name | pascalcase }} { get; set; }
+{{- end -}}
+{{- end -}}
+
+{{- /* mapFieldToDto emits a DTO mapping line for one field.
+     Context: IRField. */ -}}
+{{- define "mapFieldToDto" -}}
+{{- if .IsRelation -}}
+{{- if .IsMany }}
+            {{ .Name | pascalcase }} = entity.{{ .Name | pascalcase }},
+{{- else }}
+            {{ fkName .Name | pascalcase }} = entity.{{ fkName .Name | pascalcase }},
+{{- end -}}
+{{- else }}
+            {{ .Name | pascalcase }} = entity.{{ .Name | pascalcase }},
+{{- end -}}
+{{- end -}}
+
+{{- /* mapRequestToEntity emits a request-to-entity mapping line for one field.
+     Context: IRField. */ -}}
+{{- define "mapRequestToEntity" -}}
+{{- if .IsRelation -}}
+{{- if not .IsMany }}
+        entity.{{ fkName .Name | pascalcase }} = request.{{ fkName .Name | pascalcase }};
+{{- end -}}
+{{- else }}
+        entity.{{ .Name | pascalcase }} = request.{{ .Name | pascalcase }};
+{{- end -}}
+{{- end -}}
+
+{{- /* permissionPolicyBlock generates the authorization policy registration for one CRUD operation.
+     Context: dict with "Op" (string), "Project" (*IRProject). */ -}}
+{{- define "permissionPolicyBlock" -}}
+{{- $op := .Op -}}
+{{- range $.Project.Entities }}
+{{- $perms := .Permissions }}
+{{- if $perms }}
+{{- $roles := index $perms $op }}
+{{- if and $roles (ne (index $roles 0) "*") }}
+            policy.AddPolicy("{{ .Name }}{{ $op }}", p =>
+            {
+                p.RequireAuthenticatedUser();
+{{- if hasOwnershipToken $roles }}
+                // Ownership-based access is handled in the controller
+{{- end }}
+{{- range $roles }}
+{{- if not (hasPrefix "@" .) }}
+                p.RequireRole("{{ . }}");
+{{- end }}
+{{- end }}
+            });
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end -}}

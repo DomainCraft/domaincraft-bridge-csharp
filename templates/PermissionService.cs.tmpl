@@ -28,10 +28,10 @@ public class PermissionService : IPermissionService
     {
         if (roles == null) return false;
 
-        // If policies include "*" then treat as public/readable by any authenticated user
+        // If policies include "*" then treat as public (accessible to everyone, including anonymous)
         if (roles.Contains("*"))
         {
-            return _user?.Identity?.IsAuthenticated ?? false;
+            return true;
         }
 
         var userRoles = _user?.Claims
@@ -40,15 +40,10 @@ public class PermissionService : IPermissionService
             .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Direct role match
+        // Note: @Owner tokens are filtered by the caller (controller) and handled
+        // via IPermissionService.IsOwner() separately. HasAnyRole only matches role strings.
         foreach (var role in roles)
         {
-            if (string.Equals(role, "@Owner", StringComparison.OrdinalIgnoreCase))
-            {
-                // Caller can provide ownership-aware checks by implementing custom permission service
-                // Default behavior: deny @Owner unless explicitly implemented
-                continue;
-            }
-
             if (userRoles.Contains(role)) return true;
         }
 
@@ -69,22 +64,8 @@ public class PermissionService : IPermissionService
             return _ownerResolver.IsOwner(_user, entity);
         }
 
-        // Fallback: basic check based on NameIdentifier claim and common owner property names
-        var idClaim = _user.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? _user.FindFirst("sub")?.Value;
-        if (string.IsNullOrWhiteSpace(idClaim)) return false;
-
-        var ownerPropertyNames = new[] { "OwnerId", "AuthorId", "UserId", "CreatedBy" };
-        var t = entity.GetType();
-        foreach (var propName in ownerPropertyNames)
-        {
-            var prop = t.GetProperty(propName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.IgnoreCase);
-            if (prop == null) continue;
-            var val = prop.GetValue(entity);
-            if (val == null) continue;
-            if (val is Guid g && Guid.TryParse(idClaim, out var parsed) && g == parsed) return true;
-            if (val is string s && string.Equals(s, idClaim, StringComparison.OrdinalIgnoreCase)) return true;
-        }
-
+        // Ownership resolution requires IOwnerResolver implementation
+        // Register a custom IOwnerResolver in your DI container to enable @Owner checks
         return false;
     }
 }

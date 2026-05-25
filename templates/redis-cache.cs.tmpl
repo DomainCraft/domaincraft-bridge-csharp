@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json;
 using Microsoft.Extensions.Caching.Distributed;
 using {{ .Project.Name | pascalcase }}.Application.Caching;
@@ -51,7 +52,11 @@ public class RedisCacheService : ICacheService
             }
             else
             {
+{{- if and .Project.Cache .Project.Cache.TTLSeconds }}
+                options.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds({{ .Project.Cache.TTLSeconds }});
+{{- else }}
                 options.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(30);
+{{- end }}
             }
 
             var serialized = JsonSerializer.Serialize(value);
@@ -79,9 +84,32 @@ public class RedisCacheService : ICacheService
     /// <inheritdoc/>
     public async Task RemoveByPrefixAsync(string prefix, CancellationToken cancellationToken = default)
     {
-        // Note: Redis doesn't support prefix deletion natively
-        // In production, consider using Redis SCAN with pattern matching
-        _logger.LogWarning("Prefix deletion not fully implemented for key prefix {Prefix}", prefix);
-        await Task.CompletedTask;
+        try
+        {
+            // Use StackExchange.Redis directly for SCAN-based prefix deletion
+            var redisCache = _cache as Microsoft.Extensions.Caching.StackExchangeRedis.RedisCache;
+            if (redisCache != null)
+            {
+                // Access underlying connection via reflection for SCAN operation
+                var connProp = typeof(Microsoft.Extensions.Caching.StackExchangeRedis.RedisCache)
+                    .GetField("_connection", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                if (connProp?.GetValue(redisCache) is StackExchange.Redis.IConnectionMultiplexer connection)
+                {
+                    var db = connection.GetDatabase();
+                    var server = connection.GetServer(connection.GetEndPoints().First());
+                    var keys = server.Keys(pattern: prefix + "*", database: db.Database);
+                    foreach (var key in keys)
+                    {
+                        await db.KeyDeleteAsync(key);
+                    }
+                    return;
+                }
+            }
+            _logger.LogWarning("RemoveByPrefixAsync requires StackExchange.Redis cache implementation. Prefix: {Prefix}", prefix);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to remove cached values for prefix {Prefix}", prefix);
+        }
     }
 }

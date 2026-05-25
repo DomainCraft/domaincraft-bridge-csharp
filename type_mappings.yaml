@@ -28,6 +28,9 @@ types:
   "array(float)": "List<double>"
   "array(decimal)": "List<decimal>"
   "array(boolean)": "List<bool>"
+  "array(uuid)": "List<Guid>"
+  "array(datetime)": "List<DateTime>"
+  "array(date)": "List<DateTime>"
 
 # Value types that require nullable suffix (?) for null values
 value_types:
@@ -46,15 +49,12 @@ behaviors:
   restrict: "Restrict"
   no_action: "NoAction"
 
-# Database mappings (PostgreSQL specific)
-database_types:
-  string: "VARCHAR(255)"
-  int: "INTEGER"
-  long: "BIGINT"
-  double: "DOUBLE PRECISION"
-  decimal: "NUMERIC"
-  bool: "BOOLEAN"
-  DateTime: "TIMESTAMP"
-  text: "TEXT"
-  json: "JSONB"
-  Guid: "UUID"
+# How the bridge formats array types — %s is replaced with the element type
+array_format: "List<%s>"
+
+# How the bridge handles nullable types — %s is replaced with the type name
+# C# uses "?" suffix, Python could use "Optional[%s]", etc.
+nullable_format: "?"
+
+# How the bridge handles enum types (stored as raw names in IR)
+enum_nullable: true

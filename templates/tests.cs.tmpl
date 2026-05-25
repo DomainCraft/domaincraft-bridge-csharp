@@ -13,6 +13,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 using {{ $proj }}.Domain.Entities;
+using {{ .Project.Name | pascalcase }}.Domain.Shared;
 using {{ $proj }}.Infrastructure.Persistence;
 using {{ $proj }}.Infrastructure.Persistence.Seeders;
 
@@ -38,7 +39,6 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
 
             builder.ConfigureAppConfiguration((context, config) =>
             {
-                // Provide test configuration values
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["Jwt:Secret"] = "TestSecretKey123456789012345678901234567890",
@@ -51,7 +51,6 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
 
             builder.ConfigureServices(services =>
             {
-                // Remove real database and seeder
                 var descriptors = services.Where(d =>
                     d.ServiceType == typeof(DbContextOptions<DomainDbContext>) ||
                     d.ServiceType == typeof(DomainDbContext) ||
@@ -59,13 +58,11 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
                     .ToList();
                 foreach (var d in descriptors) services.Remove(d);
 
-                // Replace with in-memory database
                 services.AddDbContext<DomainDbContext>(options =>
                 {
                     options.UseInMemoryDatabase(_dbName);
                 });
 
-                // Remove the ICacheService registration and add a no-op one
                 var cacheDescriptors = services.Where(d =>
                     d.ServiceType?.Name == "ICacheService")
                     .ToList();
@@ -85,7 +82,6 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
 
     private async Task SeedTestEntities()
     {
-        // Create entities without required FK dependencies first
 {{- range .Project.Entities }}
 {{- $hasRequiredFK := false }}
 {{- range .Fields }}
@@ -97,7 +93,6 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
         await Create{{ .Name }}Async();
 {{- end }}
 {{- end }}
-        // Then create entities with required FK dependencies
 {{- range .Project.Entities }}
 {{- $hasRequiredFK := false }}
 {{- range .Fields }}
@@ -111,27 +106,17 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
 {{- end }}
     }
 
-{{/* Helper: check if permission list is public */}}
-{{/* Generate Create methods for all entities */}}
-{{- range .Project.Entities }}
-{{- $entity := . }}
-
-    private async Task Create{{ .Name }}Async()
-    {
-        var request = new
-        {
-{{- range .Fields }}
-{{- if and (not .IsPrimary) (not .IsMany) }}
+{{/* ===== DRY: test data value for a single field ===== */}}
+{{- define "testFieldValue" }}
 {{- if .IsRelation }}
 {{- if .IsNullable }}
             {{ .Name | pascalcase }} = _createdIds.ContainsKey("{{ .RelationTarget }}") ? _createdIds["{{ .RelationTarget }}"] : (Guid?)null,
 {{- else }}
             {{ .Name | pascalcase }} = _createdIds.GetValueOrDefault("{{ .RelationTarget }}"),
 {{- end }}
-{{- else if not (isFeatureField .Name) }}
-{{- if eq .DatabaseType "uuid" }}
+{{- else if eq .DatabaseType "uuid" }}
             {{ .Name | pascalcase }} = Guid.NewGuid(),
-{{- else if eq .DatabaseType "string" }}
+{{- else if or (eq .DatabaseType "string") (eq .DatabaseType "text") }}
 {{- if .HasValidation "email" }}
             {{ .Name | pascalcase }} = "test@example.com",
 {{- else if .HasValidation "url" }}
@@ -143,26 +128,104 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
 {{- end }}
 {{- else if eq .DatabaseType "int" }}
             {{ .Name | pascalcase }} = 1,
+{{- else if eq .DatabaseType "bigint" }}
+            {{ .Name | pascalcase }} = 1L,
 {{- else if eq .DatabaseType "float" }}
             {{ .Name | pascalcase }} = 1.0,
 {{- else if eq .DatabaseType "boolean" }}
             {{ .Name | pascalcase }} = true,
 {{- else if eq .DatabaseType "decimal" }}
             {{ .Name | pascalcase }} = 1.0m,
+{{- else if or (eq .DatabaseType "datetime") (eq .DatabaseType "date") }}
+            {{ .Name | pascalcase }} = DateTime.UtcNow,
+{{- else if hasPrefix "array(" .DatabaseType }}
+{{- $inner := enumTypeName .DatabaseType }}
+{{- if isEnumType $inner }}
+            {{ .Name | pascalcase }} = new List<{{ $inner }}>(),
+{{- else if eq $inner "string" }}
+{{- if .HasValidation "email" }}
+            {{ .Name | pascalcase }} = new List<string> { "test@example.com" },
+{{- else if .HasValidation "url" }}
+            {{ .Name | pascalcase }} = new List<string> { "https://example.com" },
+{{- else }}
+            {{ .Name | pascalcase }} = new List<string> { "test_{{ .Name | lowercase }}" },
+{{- end }}
+{{- else if eq $inner "uuid" }}
+            {{ .Name | pascalcase }} = new List<Guid> { Guid.NewGuid() },
+{{- else if eq $inner "int" }}
+            {{ .Name | pascalcase }} = new List<int> { 1 },
+{{- else if eq $inner "bigint" }}
+            {{ .Name | pascalcase }} = new List<long> { 1L },
+{{- else if eq $inner "float" }}
+            {{ .Name | pascalcase }} = new List<double> { 1.0 },
+{{- else if eq $inner "decimal" }}
+            {{ .Name | pascalcase }} = new List<decimal> { 1.0m },
+{{- else if or (eq $inner "datetime") (eq $inner "date") }}
+            {{ .Name | pascalcase }} = new List<DateTime> { DateTime.UtcNow },
+{{- else if eq $inner "boolean" }}
+            {{ .Name | pascalcase }} = new List<bool> { true },
+{{- end }}
+{{- else if isEnumType .DatabaseType }}
+{{- if .DefaultValue }}
+            {{ .Name | pascalcase }} = {{ enumTypeName .DatabaseType }}.{{ .DefaultValue | pascalcase }},
+{{- else }}
+            {{ .Name | pascalcase }} = ({{ enumTypeName .DatabaseType }})0,
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/* ===== DRY: build request body for an entity ===== */}}
+{{- define "testRequestBody" }}
+{{- range .Fields }}
+{{- if and (not .IsPrimary) (not .IsMany) }}
+{{- if not (isFeatureField .Name) }}
+{{- template "testFieldValue" . }}
 {{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
+
+{{/* ===== DRY: parse PK from response ===== */}}
+{{- define "parseCreatedId" }}
+{{- range .Fields }}
+{{- if .IsPrimary }}
+{{- $pkName := .Name | camelcase }}
+{{- if eq .DatabaseType "uuid" }}
+            if (content.TryGetProperty("{{ $pkName }}", out var idProp) && idProp.ValueKind == JsonValueKind.String && Guid.TryParse(idProp.GetString(), out var id))
+            {
+                _createdIds["{{ $.Name }}"] = id;
+            }
+{{- else if eq .DatabaseType "int" }}
+            if (content.TryGetProperty("{{ $pkName }}", out var idProp) && idProp.ValueKind == JsonValueKind.Number && idProp.TryGetInt32(out var id))
+            {
+                _createdIds["{{ $.Name }}"] = id;
+            }
+{{- else if eq .DatabaseType "bigint" }}
+            if (content.TryGetProperty("{{ $pkName }}", out var idProp) && idProp.ValueKind == JsonValueKind.Number && idProp.TryGetInt64(out var id))
+            {
+                _createdIds["{{ $.Name }}"] = id;
+            }
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/* ===== Create methods for seed entities ===== */}}
+{{- range .Project.Entities }}
+{{- $entity := . }}
+
+    private async Task Create{{ .Name }}Async()
+    {
+        var request = new
+        {
+{{- template "testRequestBody" . }}
         };
 
         var response = await _client.PostAsJsonAsync("/api/{{ .NamePlural | lowercase }}", request);
         if (response.IsSuccessStatusCode)
         {
             var content = await response.Content.ReadFromJsonAsync<JsonElement>(_jsonOptions);
-            if (content.TryGetProperty("id", out var idProp) && idProp.GetGuid() is Guid id)
-            {
-                _createdIds["{{ .Name }}"] = id;
-            }
+{{- template "parseCreatedId" . }}
         }
     }
 {{- end }}
@@ -178,8 +241,6 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
 
 {{ range .Project.Entities }}
 {{- $entity := . }}
-{{/* Determine expected status codes based on permissions */}}
-{{/* Default: public access when no permissions are defined */}}
 {{- $readPublic := true }}
 {{- $createPublic := true }}
 {{- $updatePublic := true }}
@@ -213,7 +274,7 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
     }
 
     [Fact]
-    public async Task {{ .NamePlural }}_GetById_NotFound_ReturnsNotFound()
+    public async Task {{ .NamePlural }}_GetById_NotFound_{{ if $readPublic }}ReturnsNotFound{{ else }}ReturnsUnauthorized{{ end }}()
     {
         var response = await _client.GetAsync("/api/{{ .NamePlural | lowercase }}/00000000-0000-0000-0000-000000000000");
 {{- if $readPublic }}
@@ -228,39 +289,7 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
     {
         var request = new
         {
-{{- range .Fields }}
-{{- if and (not .IsPrimary) (not .IsMany) }}
-{{- if .IsRelation }}
-{{- if .IsNullable }}
-            {{ .Name | pascalcase }} = _createdIds.ContainsKey("{{ .RelationTarget }}") ? _createdIds["{{ .RelationTarget }}"] : (Guid?)null,
-{{- else }}
-            {{ .Name | pascalcase }} = _createdIds.GetValueOrDefault("{{ .RelationTarget }}"),
-{{- end }}
-{{- else if not (isFeatureField .Name) }}
-{{- if eq .DatabaseType "uuid" }}
-            {{ .Name | pascalcase }} = Guid.NewGuid(),
-{{- else if eq .DatabaseType "string" }}
-{{- if .HasValidation "email" }}
-            {{ .Name | pascalcase }} = "test@example.com",
-{{- else if .HasValidation "url" }}
-            {{ .Name | pascalcase }} = "https://example.com",
-{{- else if .DefaultValue }}
-            {{ .Name | pascalcase }} = "{{ .DefaultValue }}",
-{{- else }}
-            {{ .Name | pascalcase }} = "test_{{ .Name | lowercase }}",
-{{- end }}
-{{- else if eq .DatabaseType "int" }}
-            {{ .Name | pascalcase }} = 1,
-{{- else if eq .DatabaseType "float" }}
-            {{ .Name | pascalcase }} = 1.0,
-{{- else if eq .DatabaseType "boolean" }}
-            {{ .Name | pascalcase }} = true,
-{{- else if eq .DatabaseType "decimal" }}
-            {{ .Name | pascalcase }} = 1.0m,
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end }}
+{{- template "testRequestBody" . }}
         };
 
         var response = await _client.PostAsJsonAsync("/api/{{ .NamePlural | lowercase }}", request);

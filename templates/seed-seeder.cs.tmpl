@@ -4,13 +4,15 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using {{ .Project.Name | pascalcase }}.Domain.Entities;
+using {{ .Project.Name | pascalcase }}.Domain.Shared;
 using {{ .Project.Name | pascalcase }}.Infrastructure.Persistence;
 using Microsoft.Extensions.Logging;
 
 namespace {{ .Project.Name | pascalcase }}.Infrastructure.Persistence.Seeders;
 
 /// <summary>
-/// Database seeder that applies seed data into the database
+/// Database seeder that applies seed data into the database.
+/// seedValueExpression is defined in _helpers.cs.tmpl (loaded via bridge.yaml helpers).
 /// </summary>
 public class DomainSeeder
 {
@@ -74,14 +76,8 @@ public class DomainSeeder
                 {
 {{- range $k, $v := . }}
 {{- $field := lookupField $k $entity }}
-{{- if and $field (eq $field.DatabaseType "uuid") }}
-                    {{ $k | pascalcase }} = Guid.Parse({{ jsonValue $v }}),
-{{- else if and $field (or (eq $field.DatabaseType "date") (eq $field.DatabaseType "datetime")) }}
-                    {{ $k | pascalcase }} = DateTime.Parse({{ jsonValue $v }}),
-{{- else if and $field (or (eq $field.DatabaseType "json") (eq $field.DatabaseType "jsonb")) }}
-                    {{ $k | pascalcase }} = JsonDocument.Parse({{ jsonValue $v }}, default),
-{{- else if and $field (or (eq $field.DatabaseType "float") (eq $field.DatabaseType "decimal") (eq $field.DatabaseType "int") (eq $field.DatabaseType "bigint") (eq $field.DatabaseType "boolean")) }}
-                    {{ $k | pascalcase }} = {{ rawSeedValue $v $field.DatabaseType }},
+{{- if $field }}
+                    {{ $k | pascalcase }} = {{ template "seedValueExpression" (dict "Field" $field "Value" $v) }},
 {{- else }}
                     {{ $k | pascalcase }} = {{ jsonValue $v }},
 {{- end }}

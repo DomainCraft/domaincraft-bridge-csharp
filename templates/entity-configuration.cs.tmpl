@@ -26,7 +26,14 @@ public class {{ .Entity.Name }}Configuration : IEntityTypeConfiguration<{{ .Enti
         // Properties
 {{- range .Entity.Fields }}
 {{- if and (not .IsRelation) (not (isFeatureField .Name)) }}
-{{- if or (eq .DatabaseType "json") (eq .DatabaseType "jsonb") }}
+{{- if isEnumType .DatabaseType }}
+        builder.Property(e => e.{{ .Name | pascalcase }})
+            .HasConversion<string>()
+            .HasMaxLength(50)
+{{- if not .IsNullable }}
+            .IsRequired()
+{{- end }};
+{{- else if or (eq .DatabaseType "json") (eq .DatabaseType "jsonb") }}
         builder.Property(e => e.{{ .Name | pascalcase }})
             .HasConversion(
                 new ValueConverter<JsonDocument?, string>(
@@ -41,6 +48,11 @@ public class {{ .Entity.Name }}Configuration : IEntityTypeConfiguration<{{ .Enti
 {{- end }}
         builder.Property(e => e.{{ .Name | pascalcase }})
             .HasMaxLength({{ $maxLen }})
+{{- if not .IsNullable }}
+            .IsRequired()
+{{- end }};
+{{- else if eq .DatabaseType "text" }}
+        builder.Property(e => e.{{ .Name | pascalcase }})
 {{- if not .IsNullable }}
             .IsRequired()
 {{- end }};
@@ -65,10 +77,7 @@ public class {{ .Entity.Name }}Configuration : IEntityTypeConfiguration<{{ .Enti
 {{- if not .IsMany }}
         // {{ .FieldName }} -> {{ .TargetEntity.Name }}
 {{- $navName := .NavigationName | pascalcase }}
-{{- $fkName := .FieldName | pascalcase }}
-{{- if not (hasSuffix "Id" $fkName) }}
-{{- $fkName = print $fkName "Id" }}
-{{- end }}
+{{- $fkName := fkName .FieldName | pascalcase }}
         builder
             .HasOne(e => e.{{ $navName }})
             .WithMany(e => e.{{ .InverseNavName | pascalcase }})

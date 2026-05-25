@@ -2,8 +2,38 @@ name: csharp-restful
 description: C# REST API bridge for DomainCraft (EF Core + PostgreSQL + JWT)
 version: "1.0.0"
 output_dir: generated
+helpers: templates/_helpers.cs.tmpl
 
-# Поддерживаемые конфигурации
+# Package registry URL for auto-resolving versions. {id} is replaced with lowercase package ID.
+# Returns JSON: {"versions": ["1.0.0", "1.0.1", ...]}
+registry_url: "https://api.nuget.org/v3-flatcontainer/{id}/index.json"
+
+# Maps logical package key → registry package ID.
+# Used to auto-resolve latest stable versions from the package registry.
+registry_packages:
+  ef_core: Microsoft.EntityFrameworkCore
+  ef_core_design: Microsoft.EntityFrameworkCore.Design
+  ef_core_relational: Microsoft.EntityFrameworkCore.Relational
+  npgsql_ef: Npgsql.EntityFrameworkCore.PostgreSQL
+  stackexchange_redis: StackExchange.Redis
+  redis_cache: Microsoft.Extensions.Caching.StackExchangeRedis
+  logging_abstractions: Microsoft.Extensions.Logging.Abstractions
+  di_abstractions: Microsoft.Extensions.DependencyInjection.Abstractions
+  jwt_bearer: Microsoft.AspNetCore.Authentication.JwtBearer
+  identity_model: Microsoft.IdentityModel.Tokens
+  swashbuckle: Swashbuckle.AspNetCore
+  swashbuckle_annotations: Swashbuckle.AspNetCore.Annotations
+  healthchecks_npgsql: AspNetCore.HealthChecks.NpgSql
+  healthchecks_redis: AspNetCore.HealthChecks.Redis
+  json_serialization: System.Text.Json
+  di_extensions: Microsoft.Extensions.DependencyInjection
+  test_sdk: Microsoft.NET.Test.Sdk
+  xunit: xunit
+  xunit_runner: xunit.runner.visualstudio
+  ef_core_inmemory: Microsoft.EntityFrameworkCore.InMemory
+  mvc_testing: Microsoft.AspNetCore.Mvc.Testing
+
+# Supported configurations
 supports:
   - api_style: rest
   - database: postgresql
@@ -33,10 +63,11 @@ templates:
   - for: project
     source: templates/seed-seeder.cs.tmpl
     target: "src/Infrastructure/Persistence/Seeders/DomainSeeder.cs"
+    when: hasSeed
 
   # ===== APPLICATION REPOSITORIES (interfaces) =====
   - for: entity
-    source: templates/repository.cs.tmpl
+    source: templates/irepository.cs.tmpl
     target: "src/Application/Repositories/I{{ .Entity.Name }}Repository.cs"
 
   - for: project
@@ -56,22 +87,27 @@ templates:
   - for: project
     source: templates/permissions.cs.tmpl
     target: "src/Application/Security/PermissionPolicies.cs"
+    when: hasPermissions
 
   - for: project
     source: templates/IPermissionService.cs.tmpl
     target: "src/Application/Security/IPermissionService.cs"
+    when: hasPermissions
 
   - for: project
     source: templates/PermissionService.cs.tmpl
     target: "src/Application/Security/PermissionService.cs"
+    when: hasPermissions
 
   - for: project
     source: templates/IOwnerResolver.cs.tmpl
     target: "src/Application/Security/IOwnerResolver.cs"
+    when: hasOwnerTokens
 
   - for: project
     source: templates/OwnerResolver.cs.tmpl
     target: "src/Application/Security/OwnerResolver.cs"
+    when: hasOwnerTokens
 
   - for: project
     source: templates/service-registration.cs.tmpl
