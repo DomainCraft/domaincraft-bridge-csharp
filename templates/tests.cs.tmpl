@@ -46,23 +46,19 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
                     ["Jwt:Audience"] = "test-audience",
                     ["ConnectionStrings:PostgreSQL"] = "Host=localhost;Database=test",
                     ["ConnectionStrings:Redis"] = "",
+                    ["TestDb:Name"] = _dbName,
                 });
             });
 
             builder.ConfigureServices(services =>
             {
-                var descriptors = services.Where(d =>
-                    d.ServiceType == typeof(DbContextOptions<DomainDbContext>) ||
-                    d.ServiceType == typeof(DomainDbContext) ||
+                // Remove the seeder — tests seed via HTTP endpoints
+                var seederDescriptors = services.Where(d =>
                     d.ImplementationType == typeof(DomainSeeder))
                     .ToList();
-                foreach (var d in descriptors) services.Remove(d);
+                foreach (var d in seederDescriptors) services.Remove(d);
 
-                services.AddDbContext<DomainDbContext>(options =>
-                {
-                    options.UseInMemoryDatabase(_dbName);
-                });
-
+                // Replace cache with no-op for tests
                 var cacheDescriptors = services.Where(d =>
                     d.ServiceType?.Name == "ICacheService")
                     .ToList();
