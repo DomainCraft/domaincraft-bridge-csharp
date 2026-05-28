@@ -19,9 +19,11 @@
   </ItemGroup>
 
   <ItemGroup>
+{{- if .Project.HasAuth }}
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="{{ index .Packages "jwt_bearer" }}" />
     <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="{{ index .Packages "identity_model" }}" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="{{ index .Packages "identity_model" }}" />
+{{- end }}
     <PackageReference Include="Swashbuckle.AspNetCore" Version="{{ index .Packages "swashbuckle" }}" />
     <PackageReference Include="Swashbuckle.AspNetCore.Annotations" Version="{{ index .Packages "swashbuckle_annotations" }}" />
     <PackageReference Include="AspNetCore.HealthChecks.NpgSql" Version="{{ index .Packages "healthchecks_npgsql" }}" />

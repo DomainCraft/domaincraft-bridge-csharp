@@ -33,17 +33,20 @@ public class DomainSeeder
     {
         _logger.LogInformation("Starting database seeding...");
 
-        // Multiple passes to handle FK dependencies
+        // Multiple passes to handle FK dependencies.
+        // Seed method returns true if new rows were inserted,
+        // false if dependencies are missing.  If no pass inserts
+        // anything we stop early.
         var maxPasses = 5;
         for (var pass = 0; pass < maxPasses; pass++)
         {
-            var seeded = false;
+            var progress = false;
 {{- range .Project.Entities }}
 {{- if .Seed }}
-            seeded |= await Seed{{ .Name }}Async();
+            progress |= await Seed{{ .Name }}Async();
 {{- end }}
 {{- end }}
-            if (!seeded) break;
+            if (!progress) break;
         }
 
         _logger.LogInformation("Database seeding completed");
@@ -59,14 +62,13 @@ public class DomainSeeder
     /// <returns>True if entities were seeded, false if skipped or failed</returns>
     private async Task<bool> Seed{{ .Name }}Async()
     {
-        // Check if data already exists
-        if (await _context.{{ .NamePlural }}.AnyAsync())
-        {
-            return false;
-        }
-
         try
         {
+            if (await _context.{{ .NamePlural }}.AnyAsync())
+            {
+                return true;
+            }
+
             _logger.LogInformation("Seeding {{ pluralize .Name | lowercase }}...");
 
             var entities = new List<{{ .Name }}>
@@ -77,7 +79,9 @@ public class DomainSeeder
 {{- range $k, $v := . }}
 {{- $field := lookupField $k $entity }}
 {{- if $field }}
-                    {{ $k | pascalcase }} = {{ template "seedValueExpression" (dict "Field" $field "Value" $v) }},
+{{- $target := $k | pascalcase -}}
+{{- if $field.IsRelation }}{{ $target = fkName $k | pascalcase }}{{ end }}
+                    {{ $target }} = {{ template "seedValueExpression" (dict "Field" $field "Value" $v) }},
 {{- else }}
                     {{ $k | pascalcase }} = {{ jsonValue $v }},
 {{- end }}

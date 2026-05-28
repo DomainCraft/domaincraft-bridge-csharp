@@ -20,21 +20,26 @@ public class {{ .Entity.Name }}Configuration : IEntityTypeConfiguration<{{ .Enti
 {{- range .Entity.Fields }}
 {{- if .IsPrimary }}
         builder.HasKey(e => e.{{ .Name | pascalcase }});
+        builder.Property(e => e.{{ .Name | pascalcase }}).HasColumnName("{{ .Name | snakecase }}");
 {{- end }}
 {{- end }}
 
         // Properties
 {{- range .Entity.Fields }}
-{{- if and (not .IsRelation) (not (isFeatureField .Name)) }}
+{{- if and (not .IsRelation) (not .IsPrimary) (not (isFeatureField .Name)) }}
+{{- $colName := .Name | snakecase }}
+{{- $propName := .Name | pascalcase }}
 {{- if isEnumType .DatabaseType }}
-        builder.Property(e => e.{{ .Name | pascalcase }})
+        builder.Property(e => e.{{ $propName }})
+            .HasColumnName("{{ $colName }}")
             .HasConversion<string>()
             .HasMaxLength(50)
 {{- if not .IsNullable }}
             .IsRequired()
 {{- end }};
 {{- else if or (eq .DatabaseType "json") (eq .DatabaseType "jsonb") }}
-        builder.Property(e => e.{{ .Name | pascalcase }})
+        builder.Property(e => e.{{ $propName }})
+            .HasColumnName("{{ $colName }}")
             .HasConversion(
                 new ValueConverter<JsonDocument?, string>(
                     v => v == null ? null : v.RootElement.GetRawText(),
@@ -46,18 +51,24 @@ public class {{ .Entity.Name }}Configuration : IEntityTypeConfiguration<{{ .Enti
 {{- if .HasValidation "max" }}
 {{- $maxLen = .ValidationValue "max" }}
 {{- end }}
-        builder.Property(e => e.{{ .Name | pascalcase }})
+        builder.Property(e => e.{{ $propName }})
+            .HasColumnName("{{ $colName }}")
             .HasMaxLength({{ $maxLen }})
 {{- if not .IsNullable }}
             .IsRequired()
 {{- end }};
 {{- else if eq .DatabaseType "text" }}
-        builder.Property(e => e.{{ .Name | pascalcase }})
+        builder.Property(e => e.{{ $propName }})
+            .HasColumnName("{{ $colName }}")
 {{- if not .IsNullable }}
             .IsRequired()
 {{- end }};
-{{- else if .IsUnique }}
-        builder.HasIndex(e => e.{{ .Name | pascalcase }}).IsUnique();
+{{- else }}
+        builder.Property(e => e.{{ $propName }})
+            .HasColumnName("{{ $colName }}");
+{{- end }}
+{{- if .IsUnique }}
+        builder.HasIndex(e => e.{{ $propName }}).IsUnique();
 {{- end }}
 {{- end }}
 {{- end }}
@@ -78,12 +89,14 @@ public class {{ .Entity.Name }}Configuration : IEntityTypeConfiguration<{{ .Enti
         // {{ .FieldName }} -> {{ .TargetEntity.Name }}
 {{- $navName := .NavigationName | pascalcase }}
 {{- $fkName := fkName .FieldName | pascalcase }}
+{{- $fkColName := fkName .FieldName | snakecase }}
         builder
             .HasOne(e => e.{{ $navName }})
             .WithMany(e => e.{{ .InverseNavName | pascalcase }})
             .HasForeignKey(e => e.{{ $fkName }})
             .OnDelete(DeleteBehavior.{{ deleteBehaviorName .OnDeleteBehavior }})
             .IsRequired({{ if .IsNullable }}false{{ else }}true{{ end }});
+        builder.Property(e => e.{{ $fkName }}).HasColumnName("{{ $fkColName }}");
 {{- end }}
 {{- end }}
 
@@ -115,17 +128,27 @@ public class {{ .Entity.Name }}Configuration : IEntityTypeConfiguration<{{ .Enti
         // Audit properties
 {{- if .Entity.HasAudit }}
         builder.Property(e => e.CreatedAt)
+            .HasColumnName("created_at")
             .HasDefaultValueSql("CURRENT_TIMESTAMP")
             .ValueGeneratedOnAdd();
 
         builder.Property(e => e.UpdatedAt)
+            .HasColumnName("updated_at")
             .HasDefaultValueSql("CURRENT_TIMESTAMP")
             .ValueGeneratedOnAddOrUpdate();
+{{- end }}
+{{- if .Entity.HasAuditLog }}
+        builder.Property(e => e.CreatedBy).HasColumnName("created_by");
+        builder.Property(e => e.UpdatedBy).HasColumnName("updated_by");
+{{- end }}
+{{- if .Entity.HasSoftDelete }}
+        builder.Property(e => e.DeletedAt).HasColumnName("deleted_at");
 {{- end }}
 
         // Concurrency token
 {{- if .Entity.HasOptimisticLock }}
         builder.Property(e => e.Version)
+            .HasColumnName("version")
             .IsConcurrencyToken()
             .HasDefaultValue(1);
 {{- end }}

@@ -190,7 +190,7 @@ public class {{ pluralize $entity }}Controller : ControllerBase
 {{- $field := lookupField $key $.Entity }}
 {{- $target := $key | pascalcase -}}
 {{- if $field -}}
-{{- if $field.IsRelation }}{{ $target = print $target "Id" }}{{ end }}
+{{- if $field.IsRelation }}{{ $target = fkName $key | pascalcase }}{{ end }}
             {{ $target }} = {{ template "seedValueExpression" (dict "Field" $field "Value" $value) }},
 {{- end }}
 {{- end }}

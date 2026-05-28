@@ -1,9 +1,11 @@
 using System.Text;
+{{- if .Project.HasAuth }}
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+{{- end }}
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
-using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using {{ .Project.Name | pascalcase }}.Application;
 using {{ .Project.Name | pascalcase }}.Application.Caching;
@@ -15,10 +17,12 @@ using {{ .Project.Name | pascalcase }}.WebApi.HealthChecks;
 
 var builder = WebApplication.CreateBuilder(args);
 
+{{- if .Project.HasAuth }}
 // Configuration
 var jwtSecret = builder.Configuration["Jwt:Secret"] ?? throw new InvalidOperationException("JWT secret not configured");
 var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "{{ .Project.Name }}";
 var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "{{ .Project.Name }}-api";
+{{- end }}
 
 // Add services
 if (builder.Environment.IsEnvironment("Testing"))
@@ -62,10 +66,15 @@ var healthChecksBuilder = builder.Services.AddHealthChecks();
 if (!builder.Environment.IsEnvironment("Testing"))
 {
     healthChecksBuilder
-        .AddNpgSql(builder.Configuration.GetConnectionString("PostgreSQL") ?? "", name: "postgresql")
-        .AddRedis(redisConnectionString ?? "localhost:6379", name: "redis");
+        .AddNpgSql(builder.Configuration.GetConnectionString("PostgreSQL") ?? "", name: "postgresql");
+
+    if (!string.IsNullOrEmpty(redisConnectionString))
+    {
+        healthChecksBuilder.AddRedis(redisConnectionString, name: "redis");
+    }
 }
 
+{{- if .Project.HasAuth }}
 // Authentication - JWT
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -81,7 +90,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateLifetime = true,
             ClockSkew = TimeSpan.FromSeconds(10),
         };
-        
+
         options.Events = new JwtBearerEvents
         {
             OnAuthenticationFailed = context =>
@@ -123,6 +132,7 @@ builder.Services.AddAuthorization(options =>
 {{- end }}
 {{- end }}
 });
+{{- end }}
 
 // Register services
 builder.Services.AddScoped<DomainSeeder>();
@@ -153,6 +163,7 @@ builder.Services.AddSwaggerGen(c =>
         Contact = new OpenApiContact { Name = "Support" },
     });
 
+{{- if .Project.HasAuth }}
     // JWT Security Definition
     var securityScheme = new OpenApiSecurityScheme
     {
@@ -169,6 +180,7 @@ builder.Services.AddSwaggerGen(c =>
     {
         { new OpenApiSecuritySchemeReference("Bearer"), new List<string>() }
     });
+{{- end }}
 });
 
 // CORS
@@ -219,8 +231,10 @@ app.UseCors("DomainCraftCors");
 app.UseCors("AllowAll");
 {{- end }}
 
+{{- if .Project.HasAuth }}
 app.UseAuthentication();
 app.UseAuthorization();
+{{- end }}
 
 app.MapControllers();
 

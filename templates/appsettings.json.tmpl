@@ -12,12 +12,14 @@
     "Redis": "{{ .Project.Cache.ConnectionString }}"
 {{- end }}
   },
+{{- if .Project.HasAuth }}
   "Jwt": {
     "Secret": "your-super-secret-jwt-key-change-this-in-production-must-be-at-least-32-characters",
     "Issuer": "{{ .Project.Name }}-api",
     "Audience": "{{ .Project.Name }}-client",
     "ExpirationMinutes": 60
   },
+{{- end }}
   "AllowedHosts": "*"
 {{- if and .Project.CORS .Project.CORS.Enabled .Project.CORS.Origins }},
   "Cors": {

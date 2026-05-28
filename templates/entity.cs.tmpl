@@ -53,7 +53,9 @@ public class {{ .Entity.Name }}
 {{- end }}
 {{- template "validationAttributes" . }}
 {{- $nullable := or .IsNullable (eq .DatabaseType "json") (eq .DatabaseType "jsonb") }}
-    public {{ languageType .DatabaseType $nullable }} {{ .Name | pascalcase }} { get; set; }{{ if and (not $nullable) (isValueType .DatabaseType) }}{{ else if not $nullable }} = default!;{{ end }}
+{{- $csType := languageType .DatabaseType $nullable }}
+{{- $isArray := hasPrefix "List<" $csType }}
+    public {{ $csType }} {{ .Name | pascalcase }} { get; set; }{{ if $isArray }} = new {{ $csType }}();{{ else if .DefaultValue }}{{ if .DefaultIsFunc }}{{ if eq $csType "DateTime" }} = DateTime.UtcNow;{{ else }} = default!;{{ end }}{{ else if eq $csType "string" }} = "{{ .DefaultValue }}";{{ else if or (eq $csType "int") (eq $csType "long") (eq $csType "double") (eq $csType "decimal") (eq $csType "bool") }} = {{ .DefaultValue }};{{ else if eq $csType "Guid" }} = Guid.Parse("{{ .DefaultValue }}");{{ else if eq $csType "DateTime" }} = DateTime.Parse("{{ .DefaultValue }}");{{ else }} = default!;{{ end }}{{ else if and (not $nullable) (isValueType .DatabaseType) }}{{ else if not $nullable }} = default!;{{ end }}
 
 {{- end }}
 {{- end }}

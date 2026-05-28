@@ -132,6 +132,11 @@ templates:
     source: templates/controller.cs.tmpl
     target: "src/WebApi/Controllers/{{ pluralize .Entity.Name }}Controller.cs"
 
+  - for: project
+    source: templates/auth-controller.cs.tmpl
+    target: "src/WebApi/Controllers/{{ .Project.Auth.Entity }}Controller.cs"
+    when: hasAuth
+
   # ===== PROJECT FILES =====
   - for: project
     source: templates/domain.csproj.tmpl
@@ -177,7 +182,7 @@ templates:
 
   - for: project
     source: templates/tests.csproj.tmpl
-    target: "tests/{{ .Project.Name | pascalcase }}.Tests.csproj"
+    target: "tests/Tests.csproj"
 
   # ===== DOCKER =====
   - for: project

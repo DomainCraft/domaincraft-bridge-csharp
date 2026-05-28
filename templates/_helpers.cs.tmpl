@@ -28,8 +28,40 @@ JsonDocument.Parse({{ jsonValue $value }}, default)
 {{- else if eq $csType "string" -}}
 {{ jsonValue $value }}
 {{- else -}}
-Enum.Parse<{{ $csType }}>({{ jsonValue $value }})
+Enum.Parse<{{ $csType }}>({{ $value | pascalcase | jsonValue }})
 {{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* defaultValueExpression generates a C# default value expression for a field.
+     Uses .DefaultValue from YAML when available, falls back to type-based defaults.
+     Context: IRField-like dict with .DatabaseType, .DefaultValue, .DefaultIsFunc. */ -}}
+{{- define "defaultValueExpression" -}}
+{{- $csType := languageType .DatabaseType false -}}
+{{- if .DefaultValue -}}
+{{- if .DefaultIsFunc -}}
+{{- if eq $csType "DateTime" -}}DateTime.UtcNow
+{{- else -}}default({{ $csType }})
+{{- end -}}
+{{- else if eq $csType "string" -}}"{{ .DefaultValue }}"
+{{- else if or (eq $csType "int") (eq $csType "long") (eq $csType "double") (eq $csType "decimal") -}}{{ .DefaultValue }}
+{{- else if eq $csType "bool" -}}{{ .DefaultValue }}
+{{- else if eq $csType "Guid" -}}Guid.Parse("{{ .DefaultValue }}")
+{{- else if eq $csType "DateTime" -}}DateTime.Parse("{{ .DefaultValue }}")
+{{- else if eq $csType "JsonDocument" -}}JsonDocument.Parse("{{ .DefaultValue }}")
+{{- else -}}{{ $csType }}.{{ .DefaultValue }}
+{{- end -}}
+{{- else if hasPrefix "List<" $csType -}}new {{ $csType }}()
+{{- else if eq $csType "string" -}}""
+{{- else if eq $csType "int" -}}0
+{{- else if eq $csType "long" -}}0L
+{{- else if eq $csType "double" -}}0.0
+{{- else if eq $csType "decimal" -}}0m
+{{- else if eq $csType "bool" -}}false
+{{- else if eq $csType "Guid" -}}Guid.NewGuid()
+{{- else if eq $csType "DateTime" -}}DateTime.UtcNow
+{{- else if eq $csType "JsonDocument" -}}JsonDocument.Parse("{}")
+{{- else -}}default({{ $csType }})
 {{- end -}}
 {{- end -}}
 

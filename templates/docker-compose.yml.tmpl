@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # PostgreSQL Database
   postgres:
@@ -50,9 +48,11 @@ services:
 {{- if and .Project.Cache .Project.Cache.Enabled .Project.Cache.ConnectionString }}
       - ConnectionStrings__Redis={{ .Project.Cache.ConnectionString }}
 {{- end }}
+{{- if .Project.HasAuth }}
       - Jwt__Secret=YourSuperSecretKeyThatIsAtLeast32CharactersLong!
       - Jwt__Issuer={{ .Project.Name }}
       - Jwt__Audience={{ .Project.Name | snakecase }}-api
+{{- end }}
     depends_on:
       postgres:
         condition: service_healthy

@@ -41,9 +41,11 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
             {
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
+{{- if .Project.HasAuth }}
                     ["Jwt:Secret"] = "TestSecretKey123456789012345678901234567890",
                     ["Jwt:Issuer"] = "test-issuer",
                     ["Jwt:Audience"] = "test-audience",
+{{- end }}
                     ["ConnectionStrings:PostgreSQL"] = "Host=localhost;Database=test",
                     ["ConnectionStrings:Redis"] = "",
                     ["TestDb:Name"] = _dbName,
@@ -106,9 +108,9 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
 {{- define "testFieldValue" }}
 {{- if .IsRelation }}
 {{- if .IsNullable }}
-            {{ .Name | pascalcase }} = _createdIds.ContainsKey("{{ .RelationTarget }}") ? _createdIds["{{ .RelationTarget }}"] : (Guid?)null,
+            {{ fkName .Name | pascalcase }} = _createdIds.ContainsKey("{{ .RelationTarget }}") ? _createdIds["{{ .RelationTarget }}"] : (Guid?)null,
 {{- else }}
-            {{ .Name | pascalcase }} = _createdIds.GetValueOrDefault("{{ .RelationTarget }}"),
+            {{ fkName .Name | pascalcase }} = _createdIds.GetValueOrDefault("{{ .RelationTarget }}"),
 {{- end }}
 {{- else if eq .DatabaseType "uuid" }}
             {{ .Name | pascalcase }} = Guid.NewGuid(),

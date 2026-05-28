@@ -9,7 +9,7 @@ Generated on: `{{ now }}`
 | **Project Name** | {{ .Project.Name }} |
 | **Database** | {{ .Project.Database }} |
 | **API Style** | {{ .Project.APIStyle }} |
-| **Authentication** | {{ .Project.Auth }} |
+| **Authentication** | {{ if .Project.HasAuth }}{{ .Project.Auth.Type }}{{ else }}None{{ end }} |
 | **Multi-Tenancy** | None |
 
 ## Architecture Overview
@@ -67,7 +67,11 @@ PUT    /api/{entities}/{id}     - Update
 DELETE /api/{entities}/{id}     - Delete
 ```
 
+{{- if .Project.HasAuth }}
 Authentication: **JWT Bearer Token**
+{{- else }}
+Authentication: **None**
+{{- end }}
 
 ## Getting Started
 
@@ -145,8 +149,10 @@ src/
 {{- end }}
 {{- end }}
 {{- end }}
+{{- if .Project.HasAuth }}
 - ✓ JWT Authentication
 - ✓ Role-Based Access Control (RBAC)
+{{- end }}
 - ✓ Entity Framework Core with PostgreSQL
 - ✓ Swagger/OpenAPI Documentation
 
