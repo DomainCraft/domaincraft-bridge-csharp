@@ -1,0 +1,28 @@
+{{- $proj := .Project.Name | pascalcase }}
+using {{ $proj }}.Domain.Entities;
+
+namespace {{ $proj }}.Application.Services;
+
+/// <summary>
+/// Developer-owned implementation for {{ .Entity.Name }}.
+/// Generated once (overwrite: false) — DomainCraft never overwrites this file,
+/// so you can safely add custom business logic here.
+/// </summary>
+public partial class {{ .Entity.Name }}Service
+{
+    // Runs before a new {{ .Entity.Name }} is saved.
+    // partial void OnBeforeCreate({{ .Entity.Name }} entity)
+    // {
+    //     entity.CreatedAt = DateTime.UtcNow;
+    // }
+
+    // Runs before an existing {{ .Entity.Name }} is saved.
+    // partial void OnBeforeUpdate({{ .Entity.Name }} entity)
+    // {
+    // }
+
+    // Runs before a {{ .Entity.Name }} is deleted (or soft-deleted).
+    // partial void OnBeforeDelete({{ .Entity.Name }} entity)
+    // {
+    // }
+}

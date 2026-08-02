@@ -109,6 +109,24 @@ templates:
     target: "src/Application/Security/OwnerResolver.cs"
     when: hasOwnerTokens
 
+  # ===== APPLICATION SERVICES (Generation Gap: Core + Custom) =====
+  # The service layer uses C# partial classes: the generated part below is always
+  # overwritten, the custom part (overwrite: false) is scaffolded once and owned by
+  # the developer. Implement the partial hooks there to keep custom business logic
+  # safe across regenerations.
+  - for: entity
+    source: templates/iservice.cs.tmpl
+    target: "src/Application/Services/I{{ .Entity.Name }}Service.cs"
+
+  - for: entity
+    source: templates/generated-service.cs.tmpl
+    target: "src/Application/Generated/{{ .Entity.Name }}Service.g.cs"
+
+  - for: entity
+    source: templates/custom-service.cs.tmpl
+    target: "src/Application/Services/{{ .Entity.Name }}Service.cs"
+    overwrite: false
+
   - for: project
     source: templates/service-registration.cs.tmpl
     target: "src/Application/DependencyInjection.cs"
@@ -182,7 +200,7 @@ templates:
 
   - for: project
     source: templates/tests.csproj.tmpl
-    target: "tests/Tests.csproj"
+    target: "tests/{{ .Project.Name | pascalcase }}.Tests.csproj"
 
   # ===== DOCKER =====
   - for: project

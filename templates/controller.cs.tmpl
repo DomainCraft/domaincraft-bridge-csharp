@@ -6,8 +6,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using {{ $proj }}.Application.Repositories;
 using {{ $proj }}.Application.Security;
+using {{ $proj }}.Application.Services;
 using {{ $proj }}.Domain.Entities;
 using {{ $proj }}.Domain.Shared;
 
@@ -21,16 +21,16 @@ namespace {{ $proj }}.WebApi.Controllers;
 [Produces("application/json")]
 public class {{ pluralize $entity }}Controller : ControllerBase
 {
-    private readonly I{{ $entity }}Repository _repository;
+    private readonly I{{ $entity }}Service _service;
     private readonly IPermissionService _permissionService;
     private readonly ILogger<{{ pluralize $entity }}Controller> _logger;
 
     public {{ pluralize $entity }}Controller(
-        I{{ $entity }}Repository repository,
+        I{{ $entity }}Service service,
         IPermissionService permissionService,
         ILogger<{{ pluralize $entity }}Controller> logger)
     {
-        _repository = repository ?? throw new ArgumentNullException(nameof(repository));
+        _service = service ?? throw new ArgumentNullException(nameof(service));
         _permissionService = permissionService ?? throw new ArgumentNullException(nameof(permissionService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
@@ -44,7 +44,7 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     public async Task<ActionResult<List<{{ $entity }}Dto>>> GetAll()
     {
         _logger.LogInformation("GET /api/{{ pluralize $entity | lowercase }} - retrieving all {{ pluralize $entity | lowercase }}");
-        var entities = await _repository.GetAllAsync();
+        var entities = await _service.GetAllAsync();
         var dtos = entities.Select(e => MapToDto(e)).ToList();
         return Ok(dtos);
     }
@@ -59,7 +59,7 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     public async Task<ActionResult<{{ $entity }}Dto>> GetById(Guid id)
     {
         _logger.LogInformation("GET /api/{{ pluralize $entity | lowercase }}/{id}", id);
-        var entity = await _repository.GetByIdAsync(id);
+        var entity = await _service.GetByIdAsync(id);
         if (entity == null)
         {
             _logger.LogWarning("{{ $entity }} with ID {id} not found", id);
@@ -88,8 +88,7 @@ public class {{ pluralize $entity }}Controller : ControllerBase
         entity.UpdatedBy = GetCurrentUserId();
 {{- end }}
 
-        await _repository.AddAsync(entity);
-        await _repository.SaveChangesAsync();
+        await _service.CreateAsync(entity);
         var dto = MapToDto(entity);
         return CreatedAtAction(nameof(GetById), new { id = entity.{{ if .PrimaryKey }}{{ .PrimaryKey.Name | pascalcase }}{{ else }}Id{{ end }} }, dto);
     }
@@ -105,7 +104,7 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     public async Task<ActionResult<{{ $entity }}Dto>> Update(Guid id, [FromBody] Update{{ $entity }}Request request)
     {
         _logger.LogInformation("PUT /api/{{ pluralize $entity | lowercase }}/{id}", id);
-        var existingEntity = await _repository.GetByIdAsync(id);
+        var existingEntity = await _service.GetByIdAsync(id);
         if (existingEntity == null)
         {
             _logger.LogWarning("{{ $entity }} with ID {id} not found for update", id);
@@ -130,9 +129,13 @@ public class {{ pluralize $entity }}Controller : ControllerBase
         existingEntity.UpdatedBy = GetCurrentUserId();
 {{- end }}
 
-        _repository.Update(existingEntity);
-        await _repository.SaveChangesAsync();
-        var dto = MapToDto(existingEntity);
+        var updated = await _service.UpdateAsync(id, existingEntity);
+        if (updated == null)
+        {
+            _logger.LogWarning("{{ $entity }} with ID {id} not found for update", id);
+            return NotFound();
+        }
+        var dto = MapToDto(updated);
         return Ok(dto);
     }
 
@@ -146,7 +149,7 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     public async Task<IActionResult> Delete(Guid id)
     {
         _logger.LogInformation("DELETE /api/{{ pluralize $entity | lowercase }}/{id}", id);
-        var entity = await _repository.GetByIdAsync(id);
+        var entity = await _service.GetByIdAsync(id);
         if (entity == null)
         {
             _logger.LogWarning("{{ $entity }} with ID {id} not found for deletion", id);
@@ -159,14 +162,12 @@ public class {{ pluralize $entity }}Controller : ControllerBase
             return Forbid();
         }
 {{- end }}
-{{- if .HasSoftDelete }}
-        entity.DeletedAt = DateTime.UtcNow;
-        _repository.Update(entity);
-        await _repository.SaveChangesAsync();
-{{- else }}
-        _repository.Delete(entity);
-        await _repository.SaveChangesAsync();
-{{- end }}
+        var deleted = await _service.DeleteAsync(id);
+        if (!deleted)
+        {
+            _logger.LogWarning("{{ $entity }} with ID {id} not found for deletion", id);
+            return NotFound();
+        }
 
         _logger.LogInformation("{{ $entity }} with ID {id} deleted successfully", id);
         return NoContent();
@@ -196,11 +197,7 @@ public class {{ pluralize $entity }}Controller : ControllerBase
 {{- end }}
         });
 {{- end }}
-        foreach (var entity in entities)
-        {
-            await _repository.AddAsync(entity);
-        }
-        await _repository.SaveChangesAsync();
+        await _service.SeedAsync(entities);
 
         return Ok(new { message = $"Seeded {entities.Count} {{ pluralize $entity | lowercase }}" });
     }

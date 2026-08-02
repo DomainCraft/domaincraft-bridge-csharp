@@ -2,6 +2,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using {{ $proj }}.Application.Caching;
 using {{ $proj }}.Application.Security;
+using {{ $proj }}.Application.Services;
 
 namespace {{ $proj }}.Application;
 
@@ -12,6 +13,13 @@ public static class DependencyInjection
         // Security
         services.AddScoped<IPermissionService, PermissionService>();
         services.AddScoped<IOwnerResolver, OwnerResolver>();
+
+        // Application services — Generation Gap pattern:
+        // DI resolves the merged partial class (generated part + developer-owned
+        // custom part from src/Application/Services/), so custom hooks take effect.
+{{- range .Project.Entities }}
+        services.AddScoped<I{{ .Name }}Service, {{ .Name }}Service>();
+{{- end }}
 
         return services;
     }

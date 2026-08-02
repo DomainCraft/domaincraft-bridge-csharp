@@ -133,5 +133,17 @@ public class RegisterRequest
 {
     public string Email { get; set; } = "";
     public string Password { get; set; } = "";
-    public string Name { get; set; } = "";
+{{- range $.Project.Entities }}
+{{- if eq .Name $.Project.Auth.Entity }}
+{{- range .Fields }}
+{{- if and (not .IsPrimary) (not .IsRelation) (not (isFeatureField .Name)) (ne .Name "email") (ne .Name "password") (ne .Name "Email") (ne .Name "Password") }}
+{{- if not .DefaultValue }}
+{{- if not .IsNullable }}
+    public {{ languageType .DatabaseType .IsNullable }} {{ .Name | pascalcase }} { get; set; } = {{ template "defaultValueExpression" . }};
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
 }

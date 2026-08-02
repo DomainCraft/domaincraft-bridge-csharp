@@ -1,0 +1,80 @@
+{{- $proj := .Project.Name | pascalcase }}
+using {{ $proj }}.Application.Repositories;
+using {{ $proj }}.Application.Services;
+using {{ $proj }}.Domain.Entities;
+
+namespace {{ $proj }}.Application.Services;
+
+// AUTO-GENERATED — DO NOT EDIT. Regenerated on every `domaincraft generate`.
+// Implement the partial hooks in src/Application/Services/{{ .Entity.Name }}Service.cs
+// (overwrite: false) to customize behavior without losing your changes.
+public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
+{
+    private readonly I{{ .Entity.Name }}Repository _repository;
+
+    public {{ .Entity.Name }}Service(I{{ .Entity.Name }}Repository repository)
+    {
+        _repository = repository ?? throw new ArgumentNullException(nameof(repository));
+    }
+
+    // Business hooks — implement these in the custom partial
+    // (src/Application/Services/{{ .Entity.Name }}Service.cs).
+    partial void OnBeforeCreate({{ .Entity.Name }} entity);
+    partial void OnBeforeUpdate({{ .Entity.Name }} entity);
+    partial void OnBeforeDelete({{ .Entity.Name }} entity);
+
+    public async Task<List<{{ .Entity.Name }}>> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        return await _repository.GetAllAsync(cancellationToken);
+    }
+
+    public async Task<{{ .Entity.Name }}?> GetByIdAsync(object id, CancellationToken cancellationToken = default)
+    {
+        return await _repository.GetByIdAsync(id, cancellationToken);
+    }
+
+    public async Task<{{ .Entity.Name }}> CreateAsync({{ .Entity.Name }} entity, CancellationToken cancellationToken = default)
+    {
+        OnBeforeCreate(entity);
+        await _repository.AddAsync(entity, cancellationToken);
+        await _repository.SaveChangesAsync(cancellationToken);
+        return entity;
+    }
+
+    public async Task<{{ .Entity.Name }}?> UpdateAsync(object id, {{ .Entity.Name }} entity, CancellationToken cancellationToken = default)
+    {
+        var existing = await _repository.GetByIdAsync(id, cancellationToken);
+        if (existing == null)
+        {
+            return null;
+        }
+        OnBeforeUpdate(entity);
+        _repository.Update(entity);
+        await _repository.SaveChangesAsync(cancellationToken);
+        return entity;
+    }
+
+    public async Task<bool> DeleteAsync(object id, CancellationToken cancellationToken = default)
+    {
+        var existing = await _repository.GetByIdAsync(id, cancellationToken);
+        if (existing == null)
+        {
+            return false;
+        }
+        OnBeforeDelete(existing);
+{{- if .HasSoftDelete }}
+        existing.DeletedAt = DateTime.UtcNow;
+        _repository.Update(existing);
+{{- else }}
+        _repository.Delete(existing);
+{{- end }}
+        await _repository.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
+    public async Task SeedAsync(IEnumerable<{{ .Entity.Name }}> entities, CancellationToken cancellationToken = default)
+    {
+        await _repository.AddRangeAsync(entities, cancellationToken);
+        await _repository.SaveChangesAsync(cancellationToken);
+    }
+}

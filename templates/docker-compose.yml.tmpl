@@ -41,7 +41,7 @@ services:
       dockerfile: Dockerfile
     container_name: {{ .Project.Name | snakecase }}-api
     ports:
-      - "8080:8080"
+      - "{{ .Project.Deploy.Port }}:{{ .Project.Deploy.Port }}"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__PostgreSQL=Host=postgres;Database={{ .Project.Name }}_db;Username=postgres;Password=postgres

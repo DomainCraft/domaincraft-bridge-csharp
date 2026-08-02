@@ -17,9 +17,23 @@ Generated on: `{{ now }}`
 This is a **clean architecture** C# REST API project with the following layers:
 
 - **Domain** (`src/Domain/`) - Core business logic, entities, and rules
-- **Application** (`src/Application/`) - Use cases, repositories, business logic
+- **Application** (`src/Application/`) - Use cases, service interfaces, repositories, business logic
 - **Infrastructure** (`src/Infrastructure/`) - Data access, database configuration, external services
 - **WebApi** (`src/WebApi/`) - REST endpoints, controllers, API configuration
+
+### Generation Gap (Day-2 safety)
+
+Business logic lives in per-entity **partial service classes** split into two files:
+
+- `src/Application/Generated/<Entity>Service.g.cs` — **regenerated on every run**. Contains
+  CRUD logic, soft-delete handling, and `partial void OnBeforeCreate/OnBeforeUpdate/OnBeforeDelete`
+  hooks.
+- `src/Application/Services/<Entity>Service.cs` — **generated once** (`overwrite: false`) and
+  owned by the developer. Implement the partial hooks here to add custom business logic.
+
+When you add fields to `domain.yaml` and regenerate, only the generated part is rewritten — your
+custom hook code is preserved. Controllers talk to `I<Entity>Service`, which DI resolves to the
+merged partial class.
 
 ## Entities ({{ len .Project.Entities }})
 
@@ -123,10 +137,13 @@ src/
 │   ├── Entities/           # Entity classes
 │   └── Shared/             # Shared types and enums
 ├── Application/            # Business logic layer
+│   ├── Services/           # Service interfaces + custom (overwrite: false) partials
+│   ├── Generated/          # Regenerated service partials (DO NOT EDIT)
 │   ├── Repositories/       # Data access patterns
 │   └── Security/           # Permission policies
 ├── Infrastructure/         # Data access implementations
 │   ├── Persistence/        # DbContext and configurations
+│   ├── Repositories/       # EF Core repository implementations
 │   └── Seeders/            # Database seeders
 └── WebApi/                 # ASP.NET Core API
 		├── Controllers/        # REST endpoints

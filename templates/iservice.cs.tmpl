@@ -1,0 +1,30 @@
+{{- $proj := .Project.Name | pascalcase }}
+using {{ $proj }}.Domain.Entities;
+
+namespace {{ $proj }}.Application.Services;
+
+/// <summary>
+/// Service interface for {{ .Entity.Name }} CRUD operations.
+/// Implemented by the generated partial (src/Application/Generated/{{ .Entity.Name }}Service.g.cs)
+/// and the developer-owned custom partial (src/Application/Services/{{ .Entity.Name }}Service.cs).
+/// </summary>
+public interface I{{ .Entity.Name }}Service
+{
+    /// <summary>Get all {{ .Entity.NamePlural | lowercase }}</summary>
+    Task<List<{{ .Entity.Name }}>> GetAllAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Get a {{ .Entity.Name | lowercase }} by ID</summary>
+    Task<{{ .Entity.Name }}?> GetByIdAsync(object id, CancellationToken cancellationToken = default);
+
+    /// <summary>Create a {{ .Entity.Name | lowercase }} (runs the OnBeforeCreate hook)</summary>
+    Task<{{ .Entity.Name }}> CreateAsync({{ .Entity.Name }} entity, CancellationToken cancellationToken = default);
+
+    /// <summary>Update a {{ .Entity.Name | lowercase }} (runs the OnBeforeUpdate hook). Returns null when not found.</summary>
+    Task<{{ .Entity.Name }}?> UpdateAsync(object id, {{ .Entity.Name }} entity, CancellationToken cancellationToken = default);
+
+    /// <summary>Delete a {{ .Entity.Name | lowercase }} by ID (runs the OnBeforeDelete hook). Returns false when not found.</summary>
+    Task<bool> DeleteAsync(object id, CancellationToken cancellationToken = default);
+
+    /// <summary>Seed multiple {{ .Entity.NamePlural | lowercase }} in one batch</summary>
+    Task SeedAsync(IEnumerable<{{ .Entity.Name }}> entities, CancellationToken cancellationToken = default);
+}

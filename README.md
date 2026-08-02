@@ -10,7 +10,7 @@ Given a `domain.yaml` file, this bridge produces a complete, runnable C# solutio
 Generated/
 ├── src/
 │   ├── Domain/           # Entities, enums, DTOs
-│   ├── Application/      # Repository interfaces, caching abstractions
+│   ├── Application/      # Service interfaces, services (custom + generated), repositories
 │   ├── Infrastructure/   # EF Core, repositories, seeders, Redis cache
 │   └── WebApi/           # Controllers, auth, health checks, Docker
 ├── tests/
@@ -19,6 +19,47 @@ Generated/
 ├── Dockerfile
 └── docker-compose.yml
 ```
+
+## Day-2 Safety (Generation Gap)
+
+The hardest problem for a code generator is the second day: you regenerate and your hand-written
+code is wiped. This bridge solves it with the **Generation Gap** pattern backed by DomainCraft's
+`overwrite: false` support.
+
+Every entity gets a `partial class` service split across two files:
+
+| File | Behavior |
+|------|----------|
+| `src/Application/Generated/<Entity>Service.g.cs` | **Regenerated on every run.** CRUD logic, soft-delete handling, and `partial void OnBeforeCreate / OnBeforeUpdate / OnBeforeDelete` hooks (no body). |
+| `src/Application/Services/<Entity>Service.cs` | **Generated once** (`overwrite: false`), owned by you. Implement the hooks to add custom business logic. |
+
+Controllers talk to the `I<Entity>Service` interface, and DI resolves it to the *merged* partial
+class — so your hook implementations always take effect:
+
+```csharp
+// src/Application/Services/ProductService.cs — never overwritten
+public partial class ProductService
+{
+    partial void OnBeforeCreate(Product entity)
+    {
+        entity.SKU = "CUSTOM-" + Guid.NewGuid().ToString("N")[..8];
+    }
+}
+```
+
+Add a field to `domain.yaml` and regenerate: only the `.g.cs` part is rewritten, your custom hook
+survives. Rename or delete the entity and the migration engine renames/deletes your custom file
+alongside it.
+
+### Hand-editable files
+
+The only scaffold-once (`overwrite: false`) files in this bridge are the custom service partials:
+
+- `src/Application/Services/<Entity>Service.cs` — custom service partials (hooks)
+
+Everything else — including entities, repositories, controllers, `Program.cs`, `appsettings.json`,
+and the `.g.cs` services — is regenerated on every run. Put business logic in the custom partials,
+never in `src/Application/Generated/`.
 
 ## Implemented Features
 
@@ -42,6 +83,8 @@ Generated/
 | Feature | Status | Notes |
 |---------|--------|-------|
 | **Clean Architecture** | Done | Domain → Application → Infrastructure → WebApi layers |
+| **Generation Gap (Day-2)** | Done | `partial` services: regenerated core + `overwrite: false` custom hooks |
+| **Service Layer** | Done | Controllers talk to `I<Entity>Service`; services orchestrate repositories + hooks |
 | **Repository Pattern** | Done | Generic `IRepository<T>` + per-entity interfaces |
 | **Separate Repositories** | Done | Each entity gets its own repository interface and implementation |
 | **EF Core Configurations** | Done | `IEntityTypeConfiguration<T>` per entity with proper column mapping |
@@ -134,9 +177,13 @@ Permissions map directly from `domain.yaml` to ASP.NET Core authorization:
 | `entity.cs.tmpl` | Entity classes with data annotations |
 | `enums.cs.tmpl` | Enum definitions |
 | `entity-configuration.cs.tmpl` | EF Core `IEntityTypeConfiguration<T>` |
-| `controller.cs.tmpl` | REST API controllers with auth |
+| `controller.cs.tmpl` | REST API controllers with auth (talk to `I<Entity>Service`) |
 | `dbcontext.cs.tmpl` | `DbContext` with entity registration |
 | `repository*.tmpl` | Repository interfaces and implementations |
+| `iservice.cs.tmpl` | Per-entity `I<Entity>Service` interfaces |
+| `generated-service.cs.tmpl` | Regenerated `partial` services with `OnBeforeCreate/Update/Delete` hooks |
+| `custom-service.cs.tmpl` | Developer-owned `overwrite: false` partial services |
+| `service-registration.cs.tmpl` | Application DI (`I<Entity>Service → <Entity>Service`) |
 | `permissions.cs.tmpl` | Permission policy definitions |
 | `IPermissionService.cs.tmpl` | Permission service interface |
 | `PermissionService.cs.tmpl` | Permission service implementation |
