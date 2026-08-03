@@ -1,0 +1,12 @@
+namespace {{ .Project.Name | pascalcase }}.Application.Email;
+
+/// <summary>
+/// Outbound port for sending email. The application depends only on this
+/// interface — never on a concrete mailer. Implementations are selected at DI
+/// time: InMemoryEmailService (default) or DaprEmailService (--addons dapr,
+/// via Dapr's SMTP output binding).
+/// </summary>
+public interface IEmailService
+{
+    Task SendAsync(string to, string subject, string body, CancellationToken cancellationToken = default);
+}

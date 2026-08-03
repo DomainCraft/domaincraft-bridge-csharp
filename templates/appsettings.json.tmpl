@@ -8,9 +8,6 @@
   },
   "ConnectionStrings": {
     "PostgreSQL": "Host=localhost;Port=5432;Database={{ .Project.Name | snakecase }}_db;Username=postgres;Password=postgres;Include Error Detail=true;"
-{{- if and .Project.Cache .Project.Cache.Enabled .Project.Cache.ConnectionString }},
-    "Redis": "{{ .Project.Cache.ConnectionString }}"
-{{- end }}
   },
 {{- if .Project.HasAuth }}
   "Jwt": {
@@ -20,6 +17,12 @@
     "ExpirationMinutes": 60
   },
 {{- end }}
+  "Storage": {
+    "RootPath": "storage"
+  },
+  "Database": {
+    "SchemaMode": "ensureCreated"
+  },
   "AllowedHosts": "*"
 {{- if and .Project.CORS .Project.CORS.Enabled .Project.CORS.Origins }},
   "Cors": {

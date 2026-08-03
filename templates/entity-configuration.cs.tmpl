@@ -47,13 +47,15 @@ public class {{ .Entity.Name }}Configuration : IEntityTypeConfiguration<{{ .Enti
                 )
             );
 {{- else if eq .DatabaseType "string" }}
-{{- $maxLen := 255 }}
+{{- $maxLen := "" }}
 {{- if .HasValidation "max" }}
 {{- $maxLen = .ValidationValue "max" }}
 {{- end }}
         builder.Property(e => e.{{ $propName }})
             .HasColumnName("{{ $colName }}")
+{{- if $maxLen }}
             .HasMaxLength({{ $maxLen }})
+{{- end }}
 {{- if not .IsNullable }}
             .IsRequired()
 {{- end }};
@@ -97,6 +99,12 @@ public class {{ .Entity.Name }}Configuration : IEntityTypeConfiguration<{{ .Enti
             .OnDelete(DeleteBehavior.{{ deleteBehaviorName .OnDeleteBehavior }})
             .IsRequired({{ if .IsNullable }}false{{ else }}true{{ end }});
         builder.Property(e => e.{{ $fkName }}).HasColumnName("{{ $fkColName }}");
+{{- else }}
+        // Many-to-many join: {{ .FieldName }} <-> {{ .InverseNavName | pascalcase }}
+        // EF Core creates the join table; the inverse collection lives on the target entity.
+        builder
+            .HasMany(e => e.{{ .FieldName | pascalcase }})
+            .WithMany(e => e.{{ .InverseNavName | pascalcase }});
 {{- end }}
 {{- end }}
 

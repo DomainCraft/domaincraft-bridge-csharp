@@ -1,0 +1,41 @@
+# Kubernetes Ingress for {{ .Project.Name }} API
+{{- if .Project.Deploy.Domain }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Project.Name | snakecase }}-api
+  labels:
+    app: {{ .Project.Name | snakecase }}-api
+spec:
+  rules:
+    - host: {{ .Project.Deploy.Domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Project.Name | snakecase }}-api
+                port:
+                  number: 80
+{{- else }}
+# No `project.deploy.domain` set — an Ingress host cannot be auto-generated.
+# Set `project.deploy.domain: api.example.com` in domain.yaml and regenerate,
+# or add the rule manually below.
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: {{ .Project.Name | snakecase }}-api
+# spec:
+#   rules:
+#     - host: example.com
+#       http:
+#         paths:
+#           - path: /
+#             pathType: Prefix
+#             backend:
+#               service:
+#                 name: {{ .Project.Name | snakecase }}-api
+#                 port:
+#                   number: 80
+{{- end }}

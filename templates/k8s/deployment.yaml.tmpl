@@ -1,0 +1,65 @@
+# Kubernetes Deployment for {{ .Project.Name }} API
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Project.Name | snakecase }}-api
+  labels:
+    app: {{ .Project.Name | snakecase }}-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: {{ .Project.Name | snakecase }}-api
+  template:
+    metadata:
+      labels:
+        app: {{ .Project.Name | snakecase }}-api
+    spec:
+      containers:
+        - name: api
+          image: {{ .Project.Name | snakecase }}-api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: {{ .Project.Deploy.Port }}
+              name: http
+          env:
+            # Connection string/credentials. Provide the Secret before applying:
+            #   kubectl create secret generic {{ .Project.Name | snakecase }}-secrets \
+            #     --from-literal=postgres-connection="Host=...;Database=...;Username=...;Password=..."
+{{- if .Project.HasAuth }}
+            - name: Jwt__Secret
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Project.Name | snakecase }}-secrets
+                  key: jwt-secret
+{{- end }}
+            - name: ConnectionStrings__PostgreSQL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Project.Name | snakecase }}-secrets
+                  key: postgres-connection
+{{- if .Project.HasAddon "observability" }}
+            - name: Jaeger__Enabled
+              value: "true"
+            - name: OTEL_EXPORTER_JAEGER_AGENT_HOST
+              value: jaeger.tracing.svc.cluster.local
+{{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

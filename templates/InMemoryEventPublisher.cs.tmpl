@@ -1,0 +1,28 @@
+{{- $proj := .Project.Name | pascalcase }}
+using {{ $proj }}.Application.Events;
+using Microsoft.Extensions.Logging;
+
+namespace {{ $proj }}.Infrastructure.Events;
+
+/// <summary>
+/// Lightweight in-process publisher used by default (no --addons). Events are
+/// written to the application log so they remain observable, but nothing is
+/// shipped to an external broker. This keeps the generated monolith simple and
+/// deployable without any sidecar infrastructure. Swap to DaprEventPublisher
+/// (--addons dapr) when you need durable, distributed messaging.
+/// </summary>
+public class InMemoryEventPublisher : IEventPublisher
+{
+    private readonly ILogger<InMemoryEventPublisher> _logger;
+
+    public InMemoryEventPublisher(ILogger<InMemoryEventPublisher> logger)
+    {
+        _logger = logger;
+    }
+
+    public Task PublishAsync(string eventName, object payload, CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Event published: {Event} {@Payload}", eventName, payload);
+        return Task.CompletedTask;
+    }
+}

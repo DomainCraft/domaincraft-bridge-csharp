@@ -1,0 +1,39 @@
+{{- $proj := .Project.Name | pascalcase }}
+using {{ $proj }}.Application.Events;
+using Dapr.Client;
+using Microsoft.Extensions.Configuration;
+
+namespace {{ $proj }}.Infrastructure.Events;
+
+/// <summary>
+/// Dapr-backed event publisher. Communicates with the Dapr sidecar over its
+/// gRPC/HTTP API to publish domain events to the configured pubsub component.
+/// (The broker itself is declared in dapr/components/pubsub.yaml; switching
+/// brokers never touches this code.)
+/// </summary>
+public class DaprEventPublisher : IEventPublisher
+{
+    private readonly DaprClient _dapr;
+    private readonly ILogger<DaprEventPublisher> _logger;
+    private readonly string _pubSubComponent;
+
+    public DaprEventPublisher(DaprClient dapr, IConfiguration configuration, ILogger<DaprEventPublisher> logger)
+    {
+        _dapr = dapr;
+        _logger = logger;
+        _pubSubComponent = configuration["Dapr:PubSubComponent"] ?? "pubsub";
+    }
+
+    public async Task PublishAsync(string eventName, object payload, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await _dapr.PublishEventAsync(_pubSubComponent, eventName, payload, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // Best-effort delivery: a broker hiccup must not break the request.
+            _logger.LogError(ex, "Dapr publish failed for {Event}", eventName);
+        }
+    }
+}

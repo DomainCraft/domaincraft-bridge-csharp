@@ -1,19 +1,38 @@
+{{- $hasSeed := false -}}
+{{- range .Project.Entities }}{{ if .Seed }}{{ $hasSeed = true }}{{ end }}{{- end -}}
 using System.Text;
 {{- if .Project.HasAuth }}
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 {{- end }}
+using Asp.Versioning;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.OpenApi;
+using System.IO.Compression;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
 using {{ .Project.Name | pascalcase }}.Application;
-using {{ .Project.Name | pascalcase }}.Application.Caching;
 using {{ .Project.Name | pascalcase }}.Infrastructure;
-using {{ .Project.Name | pascalcase }}.Infrastructure.Caching;
 using {{ .Project.Name | pascalcase }}.Infrastructure.Persistence;
+{{- if $hasSeed }}
 using {{ .Project.Name | pascalcase }}.Infrastructure.Persistence.Seeders;
+{{- end }}
 using {{ .Project.Name | pascalcase }}.WebApi.HealthChecks;
+{{- if .Project.HasAddon "dapr" }}
+using Dapr.Client;
+{{- if gt (len .Project.Entities) 0 }}
+using Hangfire;
+using Hangfire.PostgreSql;
+{{- end }}
+{{- end }}
+{{- if .Project.HasAddon "observability" }}
+using Serilog;
+using OpenTelemetry;
+using OpenTelemetry.Trace;
+{{- end }}
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -35,30 +54,17 @@ if (builder.Environment.IsEnvironment("Testing"))
 }
 else
 {
-    builder.Services.AddDbContext<DomainDbContext>(options =>
+    builder.Services.AddDbContextPool<DomainDbContext>(options =>
     {
         var connectionString = builder.Configuration.GetConnectionString("PostgreSQL")
             ?? throw new InvalidOperationException("PostgreSQL connection string not configured");
-        options.UseNpgsql(connectionString, npg => npg.MigrationsAssembly("{{ .Project.Name | pascalcase }}.Infrastructure"));
-    });
-}
-
-// Redis Cache
-var redisConnectionString = builder.Configuration.GetConnectionString("Redis");
-if (!string.IsNullOrEmpty(redisConnectionString))
-{
-    builder.Services.AddStackExchangeRedisCache(options =>
-    {
-        options.Configuration = redisConnectionString;
-        options.InstanceName = "{{ .Project.Name }}_";
-    });
-    builder.Services.AddSingleton<ICacheService, RedisCacheService>();
-}
-else
-{
-    // Fallback to in-memory cache if Redis is not configured
-    builder.Services.AddDistributedMemoryCache();
-    builder.Services.AddSingleton<ICacheService, RedisCacheService>();
+        options.UseNpgsql(connectionString, npg =>
+        {
+            npg.MigrationsAssembly("{{ .Project.Name | pascalcase }}.Infrastructure");
+            npg.EnableRetryOnFailure(3);
+            npg.CommandTimeout(30);
+        });
+    }, poolSize: 128);
 }
 
 // Health Checks (skip external service checks in Testing environment)
@@ -67,12 +73,58 @@ if (!builder.Environment.IsEnvironment("Testing"))
 {
     healthChecksBuilder
         .AddNpgSql(builder.Configuration.GetConnectionString("PostgreSQL") ?? "", name: "postgresql");
-
-    if (!string.IsNullOrEmpty(redisConnectionString))
-    {
-        healthChecksBuilder.AddRedis(redisConnectionString, name: "redis");
-    }
 }
+
+// Response compression (Brotli + Gzip)
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true;
+    options.Providers.Add<BrotliCompressionProvider>();
+    options.Providers.Add<GzipCompressionProvider>();
+});
+builder.Services.Configure<BrotliCompressionProviderOptions>(options => options.Level = CompressionLevel.Fastest);
+builder.Services.Configure<GzipCompressionProviderOptions>(options => options.Level = CompressionLevel.Fastest);
+
+// Output caching — opt-in via [OutputCache] on stable, non-variant endpoints.
+// The default policy is NoCache because generated GET endpoints are paginated,
+// sorted, searched and (often) user/tenant aware. Add an explicit policy +
+// attribute when you know a route is cache-safe.
+builder.Services.AddOutputCache(options =>
+{
+    options.AddBasePolicy(policy => policy.NoCache());
+});
+
+{{- if .Project.HasRateLimit }}
+// Rate limiting (Security/1.3). The policy name "api" is referenced from every
+// controller's [EnableRateLimiting("api")]; limits come from project.rate_limit.
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+{{- if eq .Project.RateLimit.Policy "sliding" }}
+    options.AddSlidingWindowLimiter("api", limiter =>
+    {
+        limiter.PermitLimit = {{ .Project.RateLimit.PermitLimit }};
+        limiter.Window = TimeSpan.FromSeconds({{ .Project.RateLimit.WindowSeconds }});
+        limiter.SegmentsPerWindow = 4;
+    });
+{{- else }}
+    options.AddFixedWindowLimiter("api", limiter =>
+    {
+        limiter.PermitLimit = {{ .Project.RateLimit.PermitLimit }};
+        limiter.Window = TimeSpan.FromSeconds({{ .Project.RateLimit.WindowSeconds }});
+    });
+{{- end }}
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        context.HttpContext.Response.Headers["Retry-After"] = "{{ .Project.RateLimit.WindowSeconds }}";
+        await ValueTask.CompletedTask;
+    };
+});
+{{- end }}
+
+// HttpContextAccessor is registered unconditionally — PermissionService needs it
+// even for auth-less and permission-only projects.
+builder.Services.AddHttpContextAccessor();
 
 {{- if .Project.HasAuth }}
 // Authentication - JWT
@@ -103,7 +155,6 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 
 // Authorization
-builder.Services.AddHttpContextAccessor();
 builder.Services.AddAuthorization(options =>
 {
 {{- range $op := list "Read" "Create" "Update" "Delete" }}
@@ -135,11 +186,42 @@ builder.Services.AddAuthorization(options =>
 {{- end }}
 
 // Register services
+{{- if $hasSeed }}
 builder.Services.AddScoped<DomainSeeder>();
+{{- end }}
 builder.Services.AddApplicationServices();
 builder.Services.AddInfrastructureServices();
+{{- if .Project.HasAddon "dapr" }}
+// Dapr sidecar (state, pub/sub, secrets, actors) — interacts via gRPC.
+builder.Services.AddDaprClient();
+{{- end }}
 
-// Controllers
+{{- if and (gt (len .Project.Entities) 0) (.Project.HasAddon "dapr") }}
+// Background processing (Hangfire) — the recurring seed/health job is stored in
+// the same PostgreSQL database. Jobs are lightweight and durable; swap for a
+// distributed worker (e.g. via Dapr actors) as the workload grows.
+builder.Services.AddHangfire(config => config
+    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+    .UseSimpleAssemblyNameTypeSerializer()
+    .UseRecommendedSerializerSettings()
+    .UsePostgreSqlStorage(options =>
+        options.UseNpgsqlConnection(builder.Configuration.GetConnectionString("PostgreSQL") ?? "")));
+builder.Services.AddHangfireServer();
+{{- end }}
+
+{{- if .Project.HasVersioning }}
+// API versioning — the default version and on/off come from project.versioning.
+builder.Services.AddApiVersioning(options =>
+{
+    // URLs stay clean (no version segment); a specific version satisfies
+    // unversioned calls. Controllers opt in with [ApiVersion("{{ .Project.Versioning.DefaultVersion }}")].
+    options.DefaultApiVersion = new ApiVersion("{{ .Project.Versioning.DefaultVersion }}");
+    options.AssumeDefaultVersionWhenUnspecified = true;
+    options.ReportApiVersions = true;
+}).AddApiExplorer(options =>
+    options.GroupNameFormat = "'v'VVV");
+{{- end }}
+
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
@@ -148,12 +230,36 @@ builder.Services.AddControllers()
     });
 
 // Logging
+{{- if .Project.HasAddon "observability" }}
+// --addons observability: structured logging (Serilog) + distributed tracing
+// (OpenTelemetry → Jaeger). Both are config-driven and disabled by default:
+//   - Logs go to Console; enable the Seq sink by setting `Seq:Url` (e.g. from
+//     appsettings.json or env `Seq__Url`).
+//   - Tracing starts only when `Jaeger:Enabled` is true (see docker-compose). When
+//     running on a single host, add `SourceContext` enricher for correlation.
+builder.Host.UseSerilog((context, config) =>
+{
+    config.ReadFrom.Configuration(context.Configuration);
+    var seqUrl = context.Configuration["Seq:Url"];
+    if (!string.IsNullOrEmpty(seqUrl))
+        config.WriteTo.Seq(seqUrl);
+    else
+        config.WriteTo.Console();
+});
+
+if (builder.Configuration.GetValue<bool>("Jaeger:Enabled"))
+{
+    builder.Services.AddOpenTelemetry().WithTracing(tracing =>
+        tracing.AddAspNetCoreInstrumentation().AddJaegerExporter());
+}
+{{- else }}
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
+{{- end }}
 
-// Swagger/OpenAPI
-builder.Services.AddEndpointsApiExplorer();
+// Swagger/OpenAPI — no AddEndpointsApiExplorer: the (later-registered) plain
+// endpoint explorer would override Asp.Versioning's explorer and empty the spec.
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo
@@ -184,13 +290,24 @@ builder.Services.AddSwaggerGen(c =>
 {{- end }}
 });
 
-// CORS
+// CORS — single "CorsPolicy": origins from appsettings `Cors:AllowedOrigins` at
+// runtime, else from `project.cors` (compile time), else allow-all for dev.
 builder.Services.AddCors(options =>
 {
-{{- if and .Project.CORS .Project.CORS.Enabled .Project.CORS.Origins }}
-    options.AddPolicy("DomainCraftCors", policy =>
+    var configuredOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
+    if (configuredOrigins is { Length: > 0 })
     {
-        policy.WithOrigins(
+        options.AddPolicy("CorsPolicy", policy =>
+            policy.WithOrigins(configuredOrigins)
+                  .AllowAnyMethod()
+                  .AllowAnyHeader()
+                  .AllowCredentials());
+    }
+{{- if and .Project.CORS .Project.CORS.Enabled .Project.CORS.Origins }}
+    else
+    {
+        options.AddPolicy("CorsPolicy", policy =>
+            policy.WithOrigins(
 {{- range $i, $origin := .Project.CORS.Origins }}
 {{- if $i }},{{ end }}
                 "{{ $origin }}"
@@ -198,21 +315,42 @@ builder.Services.AddCors(options =>
             )
             .AllowAnyMethod()
             .AllowAnyHeader()
-            .AllowCredentials();
-    });
+            .AllowCredentials());
+    }
 {{- else }}
-    options.AddPolicy("AllowAll", policy =>
+    else
     {
-        policy.AllowAnyOrigin()
-              .AllowAnyMethod()
-              .AllowAnyHeader();
-    });
+        options.AddPolicy("CorsPolicy", policy =>
+            policy.AllowAnyOrigin()
+                  .AllowAnyMethod()
+                  .AllowAnyHeader());
+    }
 {{- end }}
 });
 
 var app = builder.Build();
 
 // Middleware pipeline
+app.UseResponseCompression();
+
+// Security headers (Security/1.3).
+app.Use(async (context, next) =>
+{
+    context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
+    context.Response.Headers.Append("X-Frame-Options", "DENY");
+    context.Response.Headers.Append("Referrer-Policy", "strict-origin-when-cross-origin");
+    context.Response.Headers.Append("Content-Security-Policy", "default-src 'self'");
+    if (app.Environment.IsProduction())
+    {
+        context.Response.Headers.Append("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    }
+    await next();
+});
+
+{{- if .Project.HasRateLimit }}
+app.UseRateLimiter();
+{{- end }}
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -226,16 +364,14 @@ if (!app.Environment.IsEnvironment("Testing"))
 {
     app.UseHttpsRedirection();
 }
-{{- if and .Project.CORS .Project.CORS.Enabled .Project.CORS.Origins }}
-app.UseCors("DomainCraftCors");
-{{- else }}
-app.UseCors("AllowAll");
-{{- end }}
+app.UseCors("CorsPolicy");
 
 {{- if .Project.HasAuth }}
 app.UseAuthentication();
 app.UseAuthorization();
 {{- end }}
+
+app.UseOutputCache();
 
 app.MapControllers();
 
@@ -257,6 +393,14 @@ app.MapHealthChecks("/health/live", new HealthCheckOptions
     Predicate = _ => false
 });
 
+{{- if and (gt (len .Project.Entities) 0) (.Project.HasAddon "dapr") }}
+// Hangfire dashboard + a periodic data-health/seed job (job only when seed data exists).
+app.UseHangfireDashboard();
+{{- if $hasSeed }}
+RecurringJob.AddOrUpdate<DomainSeeder>("seed-check", seeder => seeder.SeedAsync(), Cron.Daily);
+{{- end }}
+{{- end }}
+
 // Database setup and seeding (skip in Testing environment - tests manage their own database)
 if (!app.Environment.IsEnvironment("Testing"))
 {
@@ -267,12 +411,29 @@ if (!app.Environment.IsEnvironment("Testing"))
         {
             var dbContext = scope.ServiceProvider.GetRequiredService<DomainDbContext>();
 
-            // Create database if not exists
-            await dbContext.Database.EnsureCreatedAsync();
+            // One, explicit schema strategy (never mix): `Database:SchemaMode`.
+            //   "ensureCreated" (default) — creates the schema directly; fast for dev, but it does
+            //     NOT create the __EFMigrationsHistory table, so it is incompatible with the
+            //     `domaincraft generate --migrate` EF-migration workflow.
+            //   "migrate" — applies pending EF Core migrations (`dotnet ef database update`),
+            //     creating the history table. Choose this once you manage schema via migrations.
+            // Mixing the two against the same database produces conflicting schema state, so pick
+            // one per environment and keep the appsettings value consistent with your tooling.
+            var schemaMode = builder.Configuration["Database:SchemaMode"] ?? "ensureCreated";
+            if (schemaMode == "migrate")
+            {
+                await dbContext.Database.MigrateAsync();
+            }
+            else
+            {
+                await dbContext.Database.EnsureCreatedAsync();
+            }
 
-            // Run seeder
+            // Run seeder (only when the domain declares seed data)
+{{- if $hasSeed }}
             var seeder = scope.ServiceProvider.GetRequiredService<DomainSeeder>();
             await seeder.SeedAsync();
+{{- end }}
         }
         catch (Exception ex)
         {

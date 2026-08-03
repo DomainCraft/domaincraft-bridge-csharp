@@ -1,0 +1,16 @@
+namespace {{ .Project.Name | pascalcase }}.Domain.Shared;
+
+/// <summary>
+/// A page of results plus the total source count, returned by paginated list
+/// endpoints (GET /api/...?page=1&amp;pageSize=20&amp;sort=-name&amp;q=...).
+/// </summary>
+public class PagedResult<T>
+{
+    public List<T> Items { get; set; } = new();
+    public int TotalCount { get; set; }
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+    public int TotalPages => PageSize > 0 ? (int)Math.Ceiling((double)TotalCount / PageSize) : 0;
+    public bool HasNextPage => Page * PageSize < TotalCount;
+    public bool HasPreviousPage => Page > 1;
+}

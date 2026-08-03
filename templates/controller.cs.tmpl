@@ -1,11 +1,16 @@
 {{- $proj := .Project.Name | pascalcase -}}
 {{- $entity := .Entity.Name -}}
 {{- $perms := .Permissions -}}
+{{- $pk := .PrimaryKey -}}
+{{- $pkType := "Guid" -}}
+{{- if $pk }}{{ $pkType = languageType $pk.DatabaseType false }}{{ end -}}
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+using Asp.Versioning;
 using {{ $proj }}.Application.Security;
 using {{ $proj }}.Application.Services;
 using {{ $proj }}.Domain.Entities;
@@ -17,8 +22,14 @@ namespace {{ $proj }}.WebApi.Controllers;
 /// REST API Controller for {{ pluralize $entity }} resource
 /// </summary>
 [ApiController]
+{{- if .Project.HasVersioning }}
+[ApiVersion("{{ .Project.Versioning.DefaultVersion }}")]
+{{- end }}
 [Route("api/[controller]")]
 [Produces("application/json")]
+{{- if .Project.HasRateLimit }}
+[EnableRateLimiting("api")]
+{{- end }}
 public class {{ pluralize $entity }}Controller : ControllerBase
 {
     private readonly I{{ $entity }}Service _service;
@@ -40,13 +51,23 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     /// </summary>
 {{- template "authOrAuthorize" (dict "Roles" (and $perms $perms.Read) "PermsDefined" (ne $perms nil) "Entity" $entity "Op" "Read") }}
     [HttpGet]
-    [ProducesResponseType(typeof(List<{{ $entity }}Dto>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<List<{{ $entity }}Dto>>> GetAll()
+    [ProducesResponseType(typeof(PagedResult<{{ $entity }}Dto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<PagedResult<{{ $entity }}Dto>>> GetAll(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = {{ .Project.Pagination.DefaultPageSize }},
+        [FromQuery] string? sort = null,
+        [FromQuery] string? search = null)
     {
-        _logger.LogInformation("GET /api/{{ pluralize $entity | lowercase }} - retrieving all {{ pluralize $entity | lowercase }}");
-        var entities = await _service.GetAllAsync();
-        var dtos = entities.Select(e => MapToDto(e)).ToList();
-        return Ok(dtos);
+        _logger.LogInformation("GET /api/{{ pluralize $entity | lowercase }} - page {Page} size {PageSize}", page, pageSize);
+        var result = await _service.GetPagedAsync(page, pageSize, sort, search);
+        var dtos = result.Items.Select(MapToDto).ToList();
+        return Ok(new PagedResult<{{ $entity }}Dto>
+        {
+            Items = dtos,
+            TotalCount = result.TotalCount,
+            Page = result.Page,
+            PageSize = result.PageSize
+        });
     }
 
     /// <summary>
@@ -56,7 +77,7 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     [HttpGet("{id}")]
     [ProducesResponseType(typeof({{ $entity }}Dto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<{{ $entity }}Dto>> GetById(Guid id)
+    public async Task<ActionResult<{{ $entity }}Dto>> GetById({{ $pkType }} id)
     {
         _logger.LogInformation("GET /api/{{ pluralize $entity | lowercase }}/{id}", id);
         var entity = await _service.GetByIdAsync(id);
@@ -101,7 +122,7 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     [ProducesResponseType(typeof({{ $entity }}Dto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<{{ $entity }}Dto>> Update(Guid id, [FromBody] Update{{ $entity }}Request request)
+    public async Task<ActionResult<{{ $entity }}Dto>> Update({{ $pkType }} id, [FromBody] Update{{ $entity }}Request request)
     {
         _logger.LogInformation("PUT /api/{{ pluralize $entity | lowercase }}/{id}", id);
         var existingEntity = await _service.GetByIdAsync(id);
@@ -111,8 +132,8 @@ public class {{ pluralize $entity }}Controller : ControllerBase
             return NotFound();
         }
 {{- if and $perms $perms.Update (hasOwnershipToken $perms.Update) }}
-        // @Owner check: verify entity ownership for non-admin users
-        if (!_permissionService.HasAnyRole(new[] { "Admin" }) && !_permissionService.IsOwner(existingEntity))
+        // @Owner check: forbid unless the caller is the owner or holds an explicit role.
+        if ({{ template "ownerCheck" (dict "Roles" $perms.Update "Var" "existingEntity") }})
         {
             return Forbid();
         }
@@ -140,13 +161,61 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     }
 
     /// <summary>
+    /// Partially update a {{ $entity | lowercase }} — only the scalar fields present
+    /// in the JSON body are applied (System.Text.Json merge patch; no JSON Patch SDK).
+    /// </summary>
+{{- template "authOrAuthorize" (dict "Roles" (and $perms $perms.Update) "PermsDefined" (ne $perms nil) "Entity" $entity "Op" "Update") }}
+    [HttpPatch("{id}")]
+    [ProducesResponseType(typeof({{ $entity }}Dto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<{{ $entity }}Dto>> Patch({{ $pkType }} id, [FromBody] JsonElement patch)
+    {
+        _logger.LogInformation("PATCH /api/{{ pluralize $entity | lowercase }}/{id}", id);
+        var existingEntity = await _service.GetByIdAsync(id);
+        if (existingEntity == null)
+        {
+            _logger.LogWarning("{{ $entity }} with ID {id} not found for patch", id);
+            return NotFound();
+        }
+{{- if and $perms $perms.Update (hasOwnershipToken $perms.Update) }}
+        // @Owner check: forbid unless the caller is the owner or holds an explicit role.
+        if ({{ template "ownerCheck" (dict "Roles" $perms.Update "Var" "existingEntity") }})
+        {
+            return Forbid();
+        }
+{{- end }}
+        try
+        {
+            ApplyPatch(patch, existingEntity);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Invalid patch applied to {{ $entity }} {id}", id);
+            return BadRequest(new { message = "Invalid patch document" });
+        }
+{{- if .HasAuditLog }}
+        existingEntity.UpdatedBy = GetCurrentUserId();
+{{- end }}
+        // Partial (merge-patch) update: the entity is already change-tracked here, so
+        // UpdatePartialAsync persists only the properties touched by ApplyPatch.
+        var updated = await _service.UpdatePartialAsync(id, existingEntity);
+        if (updated == null)
+        {
+            _logger.LogWarning("{{ $entity }} with ID {id} not found for patch", id);
+            return NotFound();
+        }
+        return Ok(MapToDto(updated));
+    }
+
+    /// <summary>
     /// Delete a {{ $entity | lowercase }}
     /// </summary>
 {{- template "authOrAuthorize" (dict "Roles" (and $perms $perms.Delete) "PermsDefined" (ne $perms nil) "Entity" $entity "Op" "Delete") }}
     [HttpDelete("{id}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> Delete(Guid id)
+    public async Task<IActionResult> Delete({{ $pkType }} id)
     {
         _logger.LogInformation("DELETE /api/{{ pluralize $entity | lowercase }}/{id}", id);
         var entity = await _service.GetByIdAsync(id);
@@ -156,8 +225,8 @@ public class {{ pluralize $entity }}Controller : ControllerBase
             return NotFound();
         }
 {{- if and $perms $perms.Delete (hasOwnershipToken $perms.Delete) }}
-        // @Owner check: verify entity ownership for non-admin users
-        if (!_permissionService.HasAnyRole(new[] { "Admin" }) && !_permissionService.IsOwner(entity))
+        // @Owner check: forbid unless the caller is the owner or holds an explicit role.
+        if ({{ template "ownerCheck" (dict "Roles" $perms.Delete "Var" "entity") }})
         {
             return Forbid();
         }
@@ -173,42 +242,12 @@ public class {{ pluralize $entity }}Controller : ControllerBase
         return NoContent();
     }
 
-{{- if and .Seed (gt (len .Seed) 0) }}
-
-    /// <summary>
-    /// Seed {{ pluralize $entity | lowercase }} with sample data
-    /// </summary>
-    [Authorize]
-    [HttpPost("seed")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<IActionResult> Seed()
-    {
-        var entities = new List<{{ $entity }}>();
-{{- range .Seed }}
-        entities.Add(new {{ $entity }}
-        {
-{{- range $key, $value := . }}
-{{- $field := lookupField $key $.Entity }}
-{{- $target := $key | pascalcase -}}
-{{- if $field -}}
-{{- if $field.IsRelation }}{{ $target = fkName $key | pascalcase }}{{ end }}
-            {{ $target }} = {{ template "seedValueExpression" (dict "Field" $field "Value" $value) }},
-{{- end }}
-{{- end }}
-        });
-{{- end }}
-        await _service.SeedAsync(entities);
-
-        return Ok(new { message = $"Seeded {entities.Count} {{ pluralize $entity | lowercase }}" });
-    }
-{{- end }}
-
-    // ===================== DTOs =====================
+// ===================== DTOs =====================
 
     public class {{ $entity }}Dto
     {
 {{- range .Entity.Fields }}
-{{- if isFeatureField .Name }}
+{{- if or (isFeatureField .Name) (eq (lower .Name) "password") }}
 {{- else if .IsPrimary }}
         public {{ languageType .DatabaseType .IsNullable }} {{ .Name | pascalcase }} { get; set; }
 {{- else }}
@@ -234,7 +273,7 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     public class Create{{ $entity }}Request
     {
 {{- range .Entity.Fields }}
-{{- if isFeatureField .Name }}
+{{- if or (isFeatureField .Name) (eq (lower .Name) "password") }}
 {{- else if not .IsPrimary }}
 {{- template "requestFieldProperties" . }}
 {{- end }}
@@ -244,7 +283,7 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     public class Update{{ $entity }}Request
     {
 {{- range .Entity.Fields }}
-{{- if isFeatureField .Name }}
+{{- if or (isFeatureField .Name) (eq (lower .Name) "password") }}
 {{- else if not .IsPrimary }}
 {{- template "requestFieldProperties" . }}
 {{- end }}
@@ -262,7 +301,7 @@ public class {{ pluralize $entity }}Controller : ControllerBase
         return new {{ $entity }}Dto
         {
 {{- range .Entity.Fields }}
-{{- if isFeatureField .Name }}
+{{- if or (isFeatureField .Name) (eq (lower .Name) "password") }}
 {{- else if .IsPrimary }}
             {{ .Name | pascalcase }} = entity.{{ .Name | pascalcase }},
 {{- else }}
@@ -289,7 +328,7 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     private void MapCreateRequestToEntity(Create{{ $entity }}Request request, {{ $entity }} entity)
     {
 {{- range .Entity.Fields }}
-{{- if isFeatureField .Name }}
+{{- if or (isFeatureField .Name) (eq (lower .Name) "password") }}
 {{- else if not .IsPrimary }}
 {{- template "mapRequestToEntity" . }}
 {{- end }}
@@ -299,9 +338,37 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     private void MapUpdateRequestToEntity(Update{{ $entity }}Request request, {{ $entity }} entity)
     {
 {{- range .Entity.Fields }}
-{{- if isFeatureField .Name }}
+{{- if or (isFeatureField .Name) (eq (lower .Name) "password") }}
 {{- else if not .IsPrimary }}
 {{- template "mapRequestToEntity" . }}
+{{- end }}
+{{- end }}
+    }
+
+    /// <summary>
+    /// Merge-patch via System.Text.Json: each scalar field present in the patch
+    /// body is deserialized and assigned. Ids, relations, arrays, enums and JSON
+    /// blobs are intentionally ignored (they are not meant for partial updates).
+    /// </summary>
+    private void ApplyPatch(JsonElement patch, {{ $entity }} entity)
+    {
+        if (patch.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException("Patch body must be a JSON object", nameof(patch));
+        }
+{{- range .Entity.Fields }}
+{{- if or (isFeatureField .Name) (eq (lower .Name) "password") }}
+{{- else if .IsPrimary }}
+{{- else if .IsRelation }}
+{{- else if .IsArray }}
+{{- else if (isEnumType .DatabaseType) }}
+{{- else if eq .DatabaseType "json" }}
+{{- else if eq .DatabaseType "jsonb" }}
+{{- else }}
+        if (patch.TryGetProperty("{{ .Name | camelcase }}", out var {{ .Name | camelcase }}El))
+        {
+            entity.{{ .Name | pascalcase }} = {{ .Name | camelcase }}El.Deserialize<{{ languageType .DatabaseType .IsNullable }}>();
+        }
 {{- end }}
 {{- end }}
     }

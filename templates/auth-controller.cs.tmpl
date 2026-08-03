@@ -1,27 +1,55 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
-using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+using Asp.Versioning;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using {{ .Project.Name | pascalcase }}.Application.Security;
 using {{ .Project.Name | pascalcase }}.Domain.Shared;
 using {{ .Project.Name | pascalcase }}.Infrastructure.Persistence;
 
 namespace {{ .Project.Name | pascalcase }}.WebApi.Controllers;
 
+{{- $proj := .Project.Name | pascalcase -}}
+{{- $authType := .Project.Auth.Entity -}}
+{{- $authPk := "Id" -}}
+{{- $authPkType := "Guid" -}}
+{{- $roleProp := "" -}}
+{{- $idParam := "userId" -}}
+{{- range .Project.Entities }}
+{{- if eq .Name $authType }}
+{{- range .Fields }}
+{{- if .IsPrimary }}{{ $authPk = .Name | pascalcase }}{{ $authPkType = languageType .DatabaseType false }}{{ end }}
+{{- if and (not .IsPrimary) (not .IsRelation) (eq (.Name | lower) "role") }}{{ $roleProp = .Name | pascalcase }}{{ end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
 [ApiController]
+{{- if .Project.HasVersioning }}
+[ApiVersion("{{ .Project.Versioning.DefaultVersion }}")]
+{{- end }}
 [Route("api/{{ .Project.Auth.Entity | lowercase }}")]
-public class {{ .Project.Auth.Entity }}Controller : ControllerBase
+{{- if .Project.HasRateLimit }}
+[EnableRateLimiting("api")]
+{{- end }}
+public class {{ $authType }}Controller : ControllerBase
 {
     private readonly DomainDbContext _context;
     private readonly IConfiguration _configuration;
+    private readonly IPasswordHasher _passwordHasher;
 
-    public {{ .Project.Auth.Entity }}Controller(DomainDbContext context, IConfiguration configuration)
+    public {{ $authType }}Controller(
+        DomainDbContext context,
+        IConfiguration configuration,
+        IPasswordHasher passwordHasher)
     {
         _context = context;
         _configuration = configuration;
+        _passwordHasher = passwordHasher;
     }
 
 {{- if .Project.Auth.Endpoints.HasLogin }}
@@ -29,14 +57,10 @@ public class {{ .Project.Auth.Entity }}Controller : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
-        var entity = await _context.{{ .Project.Auth.Entity | pluralize }}
-            .FirstOrDefaultAsync(e => EF.Property<string>(e, "Email") == request.Email);
+        var entity = await _context.{{ $authType | pluralize }}
+            .SingleOrDefaultAsync(e => e.Email == request.Email);
 
-        if (entity == null)
-            return Unauthorized(new { message = "Invalid credentials" });
-
-        var storedPassword = entity.GetType().GetProperty("Password")?.GetValue(entity)?.ToString();
-        if (storedPassword == null || storedPassword != request.Password)
+        if (entity == null || !_passwordHasher.VerifyPassword(entity.Password, request.Password))
             return Unauthorized(new { message = "Invalid credentials" });
 
         var token = GenerateJwtToken(entity);
@@ -49,67 +73,87 @@ public class {{ .Project.Auth.Entity }}Controller : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
-        var exists = await _context.{{ .Project.Auth.Entity | pluralize }}
-            .AnyAsync(e => EF.Property<string>(e, "Email") == request.Email);
+        var exists = await _context.{{ $authType | pluralize }}
+            .AnyAsync(e => e.Email == request.Email);
 
         if (exists)
             return Conflict(new { message = "Email already registered" });
 
-        var entity = Activator.CreateInstance<{{ .Project.Name | pascalcase }}.Domain.Entities.{{ .Project.Auth.Entity }}>();
-        entity.GetType().GetProperty("Id")?.SetValue(entity, Guid.NewGuid());
-        entity.GetType().GetProperty("Email")?.SetValue(entity, request.Email);
-        entity.GetType().GetProperty("Password")?.SetValue(entity, request.Password);
-{{- range $.Project.Entities }}
-{{- if eq .Name $.Project.Auth.Entity }}
+        var entity = new {{ $proj }}.Domain.Entities.{{ $authType }}
+        {
+{{- if eq $authPkType "Guid" }}
+            {{ $authPk }} = Guid.NewGuid(),
+{{- end }}
+            Email = request.Email,
+            Password = _passwordHasher.HashPassword(request.Password),
+{{- range .Project.Entities }}
+{{- if eq .Name $authType }}
 {{- range .Fields }}
-{{- if and (not .IsPrimary) (not .IsRelation) (not (isFeatureField .Name)) (ne .Name "email") (ne .Name "password") (ne .Name "Email") (ne .Name "Password") }}
-{{- if or .DefaultValue (not .IsNullable) }}
-        entity.GetType().GetProperty("{{ .Name | pascalcase }}")?.SetValue(entity, {{ template "defaultValueExpression" . }});
+            {{- if and (not .IsPrimary) (not .IsRelation) (not (isFeatureField .Name)) (not (eq (.Name | lower) "email")) (not (eq (.Name | lower) "password")) }}
+            {{- if or .DefaultValue (not .IsNullable) }}
+            {{ .Name | pascalcase }} = {{ template "defaultValueExpression" . }},
+            {{- end }}
+            {{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
-{{- end }}
-{{- end }}
+        };
 
-        _context.{{ .Project.Auth.Entity | pluralize }}.Add(entity);
+        _context.{{ $authType | pluralize }}.Add(entity);
         await _context.SaveChangesAsync();
 
         return Created();
     }
 {{- end }}
 
-{{- if .Project.Auth.Endpoints.HasMe }}
+{{- if and .Project.Auth.Endpoints.HasMe }}
     [HttpGet("me")]
     [Authorize]
     public async Task<IActionResult> Me()
     {
-        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
-        if (userId == null || !Guid.TryParse(userId, out var id))
+        var idClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+        if (idClaim == null)
             return Unauthorized();
 
-        var entity = await _context.{{ .Project.Auth.Entity | pluralize }}.FindAsync(id);
+{{- if eq $authPkType "long" }}
+        if (!long.TryParse(idClaim, out var {{ $idParam }})) return Unauthorized();
+{{- else if eq $authPkType "int" }}
+        if (!int.TryParse(idClaim, out var {{ $idParam }})) return Unauthorized();
+{{- else }}
+        if (!Guid.TryParse(idClaim, out var {{ $idParam }})) return Unauthorized();
+{{- end }}
+        var entity = await _context.{{ $authType | pluralize }}.FindAsync({{ $idParam }});
         if (entity == null)
             return NotFound();
 
+        // Never leak the password hash through the /me response.
+        entity.Password = string.Empty;
         return Ok(entity);
     }
 {{- end }}
 
-    private string GenerateJwtToken(object entity)
+    private string GenerateJwtToken({{ $proj }}.Domain.Entities.{{ $authType }} entity)
     {
         var secret = _configuration["Jwt:Secret"] ?? throw new InvalidOperationException("JWT secret not configured");
         var key = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(secret));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
-        var id = entity.GetType().GetProperty("Id")?.GetValue(entity)?.ToString() ?? "";
-        var email = entity.GetType().GetProperty("Email")?.GetValue(entity)?.ToString() ?? "";
+        var id = entity.{{ $authPk }}.ToString() ?? "";
+        var email = entity.Email;
 
-        var claims = new[]
+        var claims = new List<Claim>
         {
             new Claim(ClaimTypes.NameIdentifier, id),
             new Claim(ClaimTypes.Email, email),
             new Claim(JwtRegisteredClaimNames.Sub, id),
         };
+{{- if $roleProp }}
+        var role = entity.{{ $roleProp }}.ToString();
+        if (!string.IsNullOrEmpty(role))
+        {
+            claims.Add(new Claim(ClaimTypes.Role, role));
+        }
+{{- end }}
 
         var token = new JwtSecurityToken(
             issuer: _configuration["Jwt:Issuer"],
@@ -133,17 +177,4 @@ public class RegisterRequest
 {
     public string Email { get; set; } = "";
     public string Password { get; set; } = "";
-{{- range $.Project.Entities }}
-{{- if eq .Name $.Project.Auth.Entity }}
-{{- range .Fields }}
-{{- if and (not .IsPrimary) (not .IsRelation) (not (isFeatureField .Name)) (ne .Name "email") (ne .Name "password") (ne .Name "Email") (ne .Name "Password") }}
-{{- if not .DefaultValue }}
-{{- if not .IsNullable }}
-    public {{ languageType .DatabaseType .IsNullable }} {{ .Name | pascalcase }} { get; set; } = {{ template "defaultValueExpression" . }};
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end }}
 }

@@ -65,24 +65,6 @@ Enum.Parse<{{ $csType }}>({{ $value | pascalcase | jsonValue }})
 {{- end -}}
 {{- end -}}
 
-{{- /* authAttribute emits the authorization attribute for a CRUD operation.
-     Context: dict with "Roles" ([]string, may be nil), "Entity" (string), "Op" (string).
-     When Roles is nil: emits nothing if entity has permissions defined, [Authorize] if no permissions.
-     When Roles is ["*"]: emits [AllowAnonymous].
-     Otherwise: emits [Authorize(Policy = "EntityOp")]. */ -}}
-{{- define "authAttribute" -}}
-{{- $roles := .Roles -}}
-{{- $entity := .Entity -}}
-{{- $op := .Op -}}
-{{- if $roles -}}
-{{- if isPublicPermission $roles }}
-    [AllowAnonymous]
-{{- else }}
-    [Authorize(Policy = "{{ $entity }}{{ $op }}")]
-{{- end }}
-{{- end }}
-{{- end -}}
-
 {{- /* authOrAuthorize emits auth attribute with fallback to [Authorize] when no perms defined.
      Context: same as authAttribute. */ -}}
 {{- define "authOrAuthorize" -}}
@@ -97,9 +79,20 @@ Enum.Parse<{{ $csType }}>({{ $value | pascalcase | jsonValue }})
     [Authorize(Policy = "{{ $entity }}{{ $op }}")]
 {{- end }}
 {{- else if not $permsDefined }}
-    [Authorize]
+    [AllowAnonymous]
 {{- end }}
 {{- end -}}
+
+{{- /* ownerCheck emits the boolean expression a guards an @Owner operation: forbid
+     unless the caller is the owner OR holds at least one explicit (non-@) role from
+     the operation's role list. Roles are data-driven — never hardcoded.
+     Context: dict with "Roles" ([]string) and "Var" (string, the entity expression). */ -}}
+{{- define "ownerCheck" -}}
+{{- $roles := .Roles -}}
+{{- $var := .Var -}}
+{{- $bypass := list -}}
+{{- range $roles }}{{- if not (hasPrefix "@" .) }}{{ $bypass = append $bypass . }}{{ end }}{{- end -}}
+{{- if gt (len $bypass) 0 }}!_permissionService.HasAnyRole(new[] { {{- range $i, $r := $bypass }}{{ if $i }}, {{ end }}"{{ $r }}"{{- end }} }) && {{ end }}!_permissionService.IsOwner({{ $var }}){{- end -}}
 
 {{- /* validationAttributes emits [Required], [EmailAddress], [Url], [RegularExpression], [StringLength] attributes.
      Context: IRField. */ -}}
@@ -121,6 +114,47 @@ Enum.Parse<{{ $csType }}>({{ $value | pascalcase | jsonValue }})
 {{- end }}
 {{- if and (eq .DatabaseType "string") (or (.HasValidation "min") (.HasValidation "max")) }}
     [StringLength({{ if .HasValidation "max" }}{{ .ValidationValue "max" }}{{ else }}int.MaxValue{{ end }}, MinimumLength = {{ if .HasValidation "min" }}{{ .ValidationValue "min" }}{{ else }}0{{ end }})]
+{{- end }}
+{{- template "numericRangeAttribute" . }}
+{{- end -}}
+
+{{- /* numericRangeAttribute emits [Range(min, max)] for numeric fields that declare
+     min/max/gte/lt/lte/gt bounds. `gt`/`lt` (exclusive) are approximated as the
+     inclusive bound since System.ComponentModel.DataAnnotations [Range] is inclusive.
+     Only emitted when at least one explicit bound is present (so unconstrained
+     numerics don't get a no-op [Range(int.MinValue, int.MaxValue)]).
+     Context: IRField. */ -}}
+{{- define "numericRangeAttribute" -}}
+{{- if or (eq .DatabaseType "int") (eq .DatabaseType "bigint") (eq .DatabaseType "float") (eq .DatabaseType "decimal") -}}
+{{- $minExpr := .ValidationValue "min" -}}
+{{- if not $minExpr }}{{ $minExpr = .ValidationValue "gte" }}{{ end -}}
+{{- if not $minExpr }}{{ $minExpr = .ValidationValue "gt" }}{{ end -}}
+{{- $maxExpr := .ValidationValue "max" -}}
+{{- if not $maxExpr }}{{ $maxExpr = .ValidationValue "lte" }}{{ end -}}
+{{- if not $maxExpr }}{{ $maxExpr = .ValidationValue "lt" }}{{ end -}}
+{{- if and $minExpr $maxExpr }}
+    [Range({{ $minExpr }}, {{ $maxExpr }})]
+{{- else if $minExpr }}
+{{- if eq .DatabaseType "int" }}
+    [Range({{ $minExpr }}, int.MaxValue)]
+{{- else if eq .DatabaseType "bigint" }}
+    [Range({{ $minExpr }}, long.MaxValue)]
+{{- else if eq .DatabaseType "float" }}
+    [Range({{ $minExpr }}, double.MaxValue)]
+{{- else if eq .DatabaseType "decimal" }}
+    [Range({{ $minExpr }}, double.MaxValue)]
+{{- end }}
+{{- else if $maxExpr }}
+{{- if eq .DatabaseType "int" }}
+    [Range(int.MinValue, {{ $maxExpr }})]
+{{- else if eq .DatabaseType "bigint" }}
+    [Range(long.MinValue, {{ $maxExpr }})]
+{{- else if eq .DatabaseType "float" }}
+    [Range(double.MinValue, {{ $maxExpr }})]
+{{- else if eq .DatabaseType "decimal" }}
+    [Range(double.MinValue, {{ $maxExpr }})]
+{{- end }}
+{{- end }}
 {{- end }}
 {{- end -}}
 

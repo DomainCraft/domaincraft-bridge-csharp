@@ -1,7 +1,19 @@
 {{- $proj := .Project.Name | pascalcase }}
 using Microsoft.Extensions.DependencyInjection;
+using {{ $proj }}.Application.Security;
+using {{ $proj }}.Application.Caching;
+using {{ $proj }}.Application.Email;
+using {{ $proj }}.Application.Events;
 using {{ $proj }}.Application.Repositories;
+using {{ $proj }}.Application.Storage;
+using {{ $proj }}.Infrastructure.Caching;
+using {{ $proj }}.Infrastructure.Email;
+using {{ $proj }}.Infrastructure.Events;
 using {{ $proj }}.Infrastructure.Repositories;
+{{- if .Project.HasAuth }}
+using {{ $proj }}.Infrastructure.Security;
+{{- end }}
+using {{ $proj }}.Infrastructure.Storage;
 
 namespace {{ $proj }}.Infrastructure;
 
@@ -11,6 +23,25 @@ public static class DependencyInjection
     {
 {{- range .Project.Entities }}
         services.AddScoped<I{{ .Name }}Repository, {{ .Name }}Repository>();
+{{- end }}
+{{- if .Project.HasAuth }}
+        // Password hashing (Security/1.3) — BCrypt, never plain text.
+        services.AddScoped<IPasswordHasher, BcryptPasswordHasher>();
+{{- end }}
+{{- if .Project.HasAddon "dapr" }}
+        // Dapr addon enabled — publish via the sidecar, send email through its
+        // SMTP binding, and store objects through its storage output binding.
+        services.AddScoped<IEventPublisher, DaprEventPublisher>();
+        services.AddScoped<IEmailService, DaprEmailService>();
+        services.AddScoped<IStorageService, DaprStorageService>();
+        services.AddScoped<ICacheService, DaprCacheService>();
+{{- else }}
+        // Default — lightweight in-process event publishing, email logging and
+        // local-folder storage.
+        services.AddScoped<IEventPublisher, InMemoryEventPublisher>();
+        services.AddScoped<IEmailService, InMemoryEmailService>();
+        services.AddSingleton<IStorageService, LocalFileStorageService>();
+        services.AddSingleton<ICacheService, InMemoryCacheService>();
 {{- end }}
 
         return services;

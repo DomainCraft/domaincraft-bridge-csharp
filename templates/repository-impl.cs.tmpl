@@ -2,6 +2,7 @@
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using {{ $proj }}.Domain.Entities;
+using {{ $proj }}.Domain.Shared;
 using {{ $proj }}.Application.Repositories;
 using {{ $proj }}.Infrastructure.Persistence;
 
@@ -23,12 +24,78 @@ public class {{ .Entity.Name }}Repository : I{{ .Entity.Name }}Repository
 
     public async Task<List<{{ .Entity.Name }}>> GetAllAsync(CancellationToken cancellationToken = default)
     {
-        return await _dbSet.ToListAsync(cancellationToken);
+        var query = _dbSet.AsNoTracking();
+{{- range .Entity.RelationsOut }}
+        query = query.Include(e => e.{{ if .IsMany }}{{ .FieldName | pascalcase }}{{ else }}{{ .NavigationName }}{{ end }});
+{{- end }}
+        return await query.ToListAsync(cancellationToken);
     }
 
     public async Task<{{ .Entity.Name }}?> GetByIdAsync(object id, CancellationToken cancellationToken = default)
     {
-        return await _dbSet.FindAsync(new[] { id }, cancellationToken);
+        var query = _dbSet.AsQueryable();
+{{- range .Entity.RelationsOut }}
+        query = query.Include(e => e.{{ if .IsMany }}{{ .FieldName | pascalcase }}{{ else }}{{ .NavigationName }}{{ end }});
+{{- end }}
+        return await query.FirstOrDefaultAsync(e => e.{{ .PrimaryKey.Name | pascalcase }} == ({{ languageType .PrimaryKey.DatabaseType false }})id, cancellationToken);
+    }
+
+    public async Task<PagedResult<{{ .Entity.Name }}>> GetPagedAsync(int page, int pageSize, string? sort = null, string? search = null, CancellationToken cancellationToken = default)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, {{ .Project.Pagination.MaxPageSize }});
+
+        var query = _dbSet.AsNoTracking();
+{{- range .Entity.RelationsOut }}
+        query = query.Include(e => e.{{ if .IsMany }}{{ .FieldName | pascalcase }}{{ else }}{{ .NavigationName }}{{ end }});
+{{- end }}
+{{- $strFields := list }}
+{{- range .Entity.Fields }}
+{{- if eq .DatabaseType "string" }}{{ $strFields = append $strFields .Name }}{{ end }}
+{{- end }}
+{{- if gt (len $strFields) 0 }}
+        if (!string.IsNullOrEmpty(search))
+        {
+            query = query.Where(e => {{ range $i, $f := $strFields }}{{ if $i }} || {{ end }}e.{{ $f | pascalcase }}.Contains(search){{- end }});
+        }
+{{- end }}
+
+        if (!string.IsNullOrEmpty(sort))
+        {
+            IOrderedQueryable<{{ .Entity.Name }}> ordered;
+            switch (sort)
+            {
+{{- range .Entity.Fields }}
+{{- if isFeatureField .Name }}
+{{- else if .IsPrimary }}
+{{- else if .IsRelation }}
+{{- else if (isEnumType .DatabaseType) }}
+{{- else if .IsArray }}
+{{- else if eq .DatabaseType "json" }}
+{{- else if eq .DatabaseType "jsonb" }}
+{{- else }}
+                case "{{ .Name | camelcase }}": ordered = query.OrderBy(e => e.{{ .Name | pascalcase }}); break;
+                case "-{{ .Name | camelcase }}": ordered = query.OrderByDescending(e => e.{{ .Name | pascalcase }}); break;
+{{- end }}
+{{- end }}
+                default: ordered = query.OrderBy(e => e.{{ .PrimaryKey.Name | pascalcase }}); break;
+            }
+            query = ordered;
+        }
+
+        var totalCount = await query.CountAsync(cancellationToken);
+        var items = await query
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        return new PagedResult<{{ .Entity.Name }}>
+        {
+            Items = items,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize
+        };
     }
 
     public async Task<List<{{ .Entity.Name }}>> FindAsync(Expression<Func<{{ .Entity.Name }}, bool>> predicate, CancellationToken cancellationToken = default)

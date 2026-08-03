@@ -1,0 +1,69 @@
+{{- $proj := .Project.Name | pascalcase }}
+using System.Collections.Concurrent;
+using {{ $proj }}.Application.Caching;
+using Microsoft.Extensions.Logging;
+
+namespace {{ $proj }}.Infrastructure.Caching;
+
+/// <summary>
+/// Lightweight in-process cache used by default (no --addons dapr). Useful for
+/// a single-instance monolith; swap to DaprCacheService (--addons dapr) when you
+/// need a shared, durable distributed cache.
+/// </summary>
+public class InMemoryCacheService : ICacheService
+{
+    // key -> (json value, absolute expiry). null expiry = no TTL.
+    private readonly ConcurrentDictionary<string, (string? Json, DateTimeOffset? ExpiresAt)> _cache = new();
+    private readonly ILogger<InMemoryCacheService> _logger;
+
+    public InMemoryCacheService(ILogger<InMemoryCacheService> logger)
+    {
+        _logger = logger;
+    }
+
+    public Task<T?> GetAsync<T>(string key, CancellationToken cancellationToken = default)
+    {
+        if (_cache.TryGetValue(key, out var entry))
+        {
+            if (entry.ExpiresAt.HasValue && entry.ExpiresAt.Value <= DateTimeOffset.UtcNow)
+            {
+                _cache.TryRemove(key, out _);
+                return Task.FromResult<T?>(default);
+            }
+            try
+            {
+                return Task.FromResult<T?>(System.Text.Json.JsonSerializer.Deserialize<T>(entry.Json));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to deserialize cached value for key {Key}", key);
+                return Task.FromResult<T?>(default);
+            }
+        }
+        return Task.FromResult<T?>(default);
+    }
+
+    public Task SetAsync<T>(string key, T value, TimeSpan? expiration = null, CancellationToken cancellationToken = default)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(value);
+        var expiry = expiration.HasValue ? (DateTimeOffset?)DateTimeOffset.UtcNow.Add(expiration.Value) : null;
+        _cache[key] = (json, expiry?.UtcDateTime);
+        return Task.CompletedTask;
+    }
+
+    public Task RemoveAsync(string key, CancellationToken cancellationToken = default)
+    {
+        _cache.TryRemove(key, out _);
+        return Task.CompletedTask;
+    }
+
+    public Task RemoveByPrefixAsync(string prefix, CancellationToken cancellationToken = default)
+    {
+        var keys = _cache.Keys.Where(k => k.StartsWith(prefix, StringComparison.Ordinal)).ToList();
+        foreach (var key in keys)
+        {
+            _cache.TryRemove(key, out _);
+        }
+        return Task.CompletedTask;
+    }
+}

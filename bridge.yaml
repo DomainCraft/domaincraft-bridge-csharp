@@ -15,16 +15,14 @@ registry_packages:
   ef_core_design: Microsoft.EntityFrameworkCore.Design
   ef_core_relational: Microsoft.EntityFrameworkCore.Relational
   npgsql_ef: Npgsql.EntityFrameworkCore.PostgreSQL
-  stackexchange_redis: StackExchange.Redis
-  redis_cache: Microsoft.Extensions.Caching.StackExchangeRedis
   logging_abstractions: Microsoft.Extensions.Logging.Abstractions
   di_abstractions: Microsoft.Extensions.DependencyInjection.Abstractions
+  dapr: Dapr.AspNetCore
   jwt_bearer: Microsoft.AspNetCore.Authentication.JwtBearer
   identity_model: Microsoft.IdentityModel.Tokens
   swashbuckle: Swashbuckle.AspNetCore
   swashbuckle_annotations: Swashbuckle.AspNetCore.Annotations
   healthchecks_npgsql: AspNetCore.HealthChecks.NpgSql
-  healthchecks_redis: AspNetCore.HealthChecks.Redis
   json_serialization: System.Text.Json
   di_extensions: Microsoft.Extensions.DependencyInjection
   test_sdk: Microsoft.NET.Test.Sdk
@@ -32,6 +30,28 @@ registry_packages:
   xunit_runner: xunit.runner.visualstudio
   ef_core_inmemory: Microsoft.EntityFrameworkCore.InMemory
   mvc_testing: Microsoft.AspNetCore.Mvc.Testing
+  hangfire: Hangfire
+  hangfire_postgresql: Hangfire.PostgreSql
+  versioning: Asp.Versioning.Mvc
+  versioning_api_explorer: Asp.Versioning.Mvc.ApiExplorer
+  bcrypt: BCrypt.Net-Next
+  serilog: Serilog.AspNetCore
+  serilog_settings: Serilog.Settings.Configuration
+  serilog_seq: Serilog.Sinks.Seq
+  serilog_console: Serilog.Sinks.Console
+  otel_hosting: OpenTelemetry.Extensions.Hosting
+  otel_aspnetcore: OpenTelemetry.Instrumentation.AspNetCore
+  otel_jaeger: OpenTelemetry.Exporter.Jaeger
+
+# Database migrations. The core CLI runs these in order from the generated output
+# directory ONLY when invoked with `domaincraft generate --migrate`, so applying
+# schema changes to a real database stays an explicit, opt-in step. The developer
+# never has to think about SQL — this bridge owns it via EF Core tooling.
+migrations:
+  enabled: true
+  commands:
+    - "dotnet ef migrations add InitialCreate --project src/Infrastructure --startup-project src/WebApi --output-dir Persistence/Migrations"
+    - "dotnet ef database update --project src/Infrastructure --startup-project src/WebApi"
 
 # Supported configurations
 supports:
@@ -50,6 +70,10 @@ templates:
     source: templates/enums.cs.tmpl
     target: "src/Domain/Shared/Enums.cs"
     when: hasEnums
+
+  - for: project
+    source: templates/PagedResult.cs.tmpl
+    target: "src/Domain/Shared/PagedResult.cs"
 
   # ===== INFRASTRUCTURE PERSISTENCE =====
   - for: project
@@ -92,22 +116,28 @@ templates:
   - for: project
     source: templates/IPermissionService.cs.tmpl
     target: "src/Application/Security/IPermissionService.cs"
-    when: hasPermissions
 
   - for: project
     source: templates/PermissionService.cs.tmpl
     target: "src/Application/Security/PermissionService.cs"
-    when: hasPermissions
 
   - for: project
     source: templates/IOwnerResolver.cs.tmpl
     target: "src/Application/Security/IOwnerResolver.cs"
-    when: hasOwnerTokens
 
   - for: project
     source: templates/OwnerResolver.cs.tmpl
     target: "src/Application/Security/OwnerResolver.cs"
-    when: hasOwnerTokens
+
+  - for: project
+    source: templates/IPasswordHasher.cs.tmpl
+    target: "src/Application/Security/IPasswordHasher.cs"
+    when: hasAuth
+
+  - for: project
+    source: templates/BcryptPasswordHasher.cs.tmpl
+    target: "src/Infrastructure/Security/BcryptPasswordHasher.cs"
+    when: hasAuth
 
   # ===== APPLICATION SERVICES (Generation Gap: Core + Custom) =====
   # The service layer uses C# partial classes: the generated part below is always
@@ -132,13 +162,94 @@ templates:
     target: "src/Application/DependencyInjection.cs"
 
   # ===== CACHING =====
+  # Redis is intentionally NOT referenced. Caching is either in-process
+  # (InMemoryCacheService) or, with the dapr addon, through Dapr state management
+  # (DaprCacheService → dapr/components/statestore.yaml).
   - for: project
     source: templates/icache-service.cs.tmpl
     target: "src/Application/Caching/ICacheService.cs"
 
   - for: project
-    source: templates/redis-cache.cs.tmpl
-    target: "src/Infrastructure/Caching/RedisCacheService.cs"
+    source: templates/InMemoryCacheService.cs.tmpl
+    target: "src/Infrastructure/Caching/InMemoryCacheService.cs"
+    when: notHasAddon:dapr
+
+  - for: project
+    source: templates/DaprCacheService.cs.tmpl
+    target: "src/Infrastructure/Caching/DaprCacheService.cs"
+    when: hasAddon:dapr
+
+  # ===== EMAIL (port + implementations) =====
+  - for: project
+    source: templates/IEmailService.cs.tmpl
+    target: "src/Application/Email/IEmailService.cs"
+
+  - for: project
+    source: templates/InMemoryEmailService.cs.tmpl
+    target: "src/Infrastructure/Email/InMemoryEmailService.cs"
+    when: notHasAddon:dapr
+
+  - for: project
+    source: templates/DaprEmailService.cs.tmpl
+    target: "src/Infrastructure/Email/DaprEmailService.cs"
+    when: hasAddon:dapr
+
+  # ===== STORAGE (port + implementations) =====
+  # Objects/files are always exposed through IStorageService. The default local
+  # implementation keeps them on disk; with --addons dapr the same keys route
+  # through the Dapr storage output binding (local/S3/Blob/GCS) so providers swap
+  # without changing application code.
+  - for: project
+    source: templates/IStorageService.cs.tmpl
+    target: "src/Application/Storage/IStorageService.cs"
+
+  - for: project
+    source: templates/LocalFileStorageService.cs.tmpl
+    target: "src/Infrastructure/Storage/LocalFileStorageService.cs"
+    when: notHasAddon:dapr
+
+  - for: project
+    source: templates/DaprStorageService.cs.tmpl
+    target: "src/Infrastructure/Storage/DaprStorageService.cs"
+    when: hasAddon:dapr
+
+  # ===== EVENT PUBLISHING (port + implementations) =====
+  # The IEventPublisher interface is always generated; the concrete publisher is
+  # selected at DI time based on whether the project is generated with --addons dapr.
+  - for: project
+    source: templates/IEventPublisher.cs.tmpl
+    target: "src/Application/Events/IEventPublisher.cs"
+
+  - for: project
+    source: templates/InMemoryEventPublisher.cs.tmpl
+    target: "src/Infrastructure/Events/InMemoryEventPublisher.cs"
+    when: notHasAddon:dapr
+
+  - for: project
+    source: templates/DaprEventPublisher.cs.tmpl
+    target: "src/Infrastructure/Events/DaprEventPublisher.cs"
+    when: hasAddon:dapr
+
+  # ===== DAPR COMPONENT MANIFESTS (only when the dapr addon is enabled) =====
+  - for: project
+    source: templates/dapr-components/pubsub.yaml.tmpl
+    target: "dapr/components/pubsub.yaml"
+    when: hasAddon:dapr
+
+  - for: project
+    source: templates/dapr-components/statestore.yaml.tmpl
+    target: "dapr/components/statestore.yaml"
+    when: hasAddon:dapr
+
+  - for: project
+    source: templates/dapr-components/email.yaml.tmpl
+    target: "dapr/components/email.yaml"
+    when: hasAddon:dapr
+
+  - for: project
+    source: templates/dapr-components/storage.yaml.tmpl
+    target: "dapr/components/storage.yaml"
+    when: hasAddon:dapr
 
   # ===== HEALTH CHECKS =====
   - for: project
@@ -180,6 +291,18 @@ templates:
     source: templates/appsettings.json.tmpl
     target: "src/WebApi/appsettings.json"
 
+  - for: project
+    source: templates/appsettings.Development.json.tmpl
+    target: "src/WebApi/appsettings.Development.json"
+
+  - for: project
+    source: templates/appsettings.Staging.json.tmpl
+    target: "src/WebApi/appsettings.Staging.json"
+
+  - for: project
+    source: templates/appsettings.Production.json.tmpl
+    target: "src/WebApi/appsettings.Production.json"
+
   # ===== DOCUMENTATION =====
   - for: entity
     source: templates/entity-summary.md.tmpl
@@ -210,3 +333,16 @@ templates:
   - for: project
     source: templates/docker-compose.yml.tmpl
     target: "docker-compose.yml"
+
+  # ===== DEPLOYMENT (Kubernetes) =====
+  - for: project
+    source: templates/k8s/deployment.yaml.tmpl
+    target: "deploy/k8s/deployment.yaml"
+
+  - for: project
+    source: templates/k8s/service.yaml.tmpl
+    target: "deploy/k8s/service.yaml"
+
+  - for: project
+    source: templates/k8s/ingress.yaml.tmpl
+    target: "deploy/k8s/ingress.yaml"

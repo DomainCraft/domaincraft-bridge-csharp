@@ -1,0 +1,25 @@
+{{- $provider := "local" -}}
+{{- if and .Project.Infrastructure .Project.Infrastructure.Storage }}{{ $provider = .Project.Infrastructure.Storage }}{{ end -}}
+{{- $bindingType := "bindings.localstorage" -}}
+{{- if eq $provider "s3" }}{{ $bindingType = "bindings.aws.s3" -}}
+{{- else if eq $provider "azure-blob" }}{{ $bindingType = "bindings.azure.blobstorage" -}}
+{{- else if eq $provider "gcs" }}{{ $bindingType = "bindings.gcp.gcs" -}}
+{{- end }}
+# Dapr output binding for object storage. The `type` picks the provider. The
+# default project uses local disk; set project.infrastructure.storage to one of
+# s3 | azure-blob | gcs to switch without touching your code. The app always
+# depends on IStorageService.
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: storage
+spec:
+  type: {{ $bindingType }}
+  version: v1
+  metadata:
+    - name: bucket
+      value: {{ .Project.Name | snakecase }}-objects
+{{- if eq $provider "local" }}
+    - name: rootPath
+      value: ./storage
+{{- end }}

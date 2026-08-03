@@ -1,0 +1,10 @@
+{{- $cache := "in-memory" -}}
+{{- if and .Project.Infrastructure .Project.Infrastructure.Cache }}{{ $cache = .Project.Infrastructure.Cache }}{{ end -}}
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: statestore
+spec:
+  type: state.{{ $cache }}
+  version: v1
+  metadata: []

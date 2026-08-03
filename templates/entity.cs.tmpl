@@ -11,7 +11,6 @@ namespace {{ .Project.Name | pascalcase }}.Domain.Entities;
 /// <summary>
 /// Entity: {{ .Entity.Name }}
 /// </summary>
-[Table("{{ .Entity.Name | snakecase }}")]
 public class {{ .Entity.Name }}
 {
 {{- range .Entity.Fields }}
@@ -30,10 +29,8 @@ public class {{ .Entity.Name }}
     public virtual ICollection<{{ .RelationTarget }}> {{ .Name | pascalcase }} { get; set; } = new List<{{ .RelationTarget }}>();
 
 {{- else }}
-    /// <summary>Foreign Key to {{ .RelationTarget }}</summary>
+/// <summary>Foreign Key to {{ .RelationTarget }}</summary>
 {{- $fk := fkName .Name | pascalcase }}
-{{- $navName := $fk | trimSuffix "Id" }}
-{{- if eq $navName "" }}{{ $navName = .RelationTarget }}{{ end }}
 {{- if .IsNullable }}
     [JsonPropertyName("{{ .Name | camelcase }}")]
     public {{ languageType .DatabaseType .IsNullable }} {{ $fk }} { get; set; }
@@ -43,9 +40,8 @@ public class {{ .Entity.Name }}
     public {{ languageType .DatabaseType .IsNullable }} {{ $fk }} { get; set; } = default!;
 {{- end }}
 
-    [ForeignKey("{{ $fk }}")]
-    public virtual {{ .RelationTarget }} {{ $navName }} { get; set; } = default!;
-
+[ForeignKey("{{ $fk }}")]
+    public virtual {{ .RelationTarget }} {{ .NavigationName | pascalcase }} { get; set; } = default!;
 {{- end }}
 {{- else }}
 {{- if .IsHidden }}
@@ -62,8 +58,9 @@ public class {{ .Entity.Name }}
 
 {{/* ===== Inverse navigation properties for relations pointing TO this entity ===== */}}
 {{- range .Entity.RelationsIn }}
-{{- if .IsMany }}
-    /// <summary>Inverse navigation: {{ .TargetEntity.Name }}.{{ .FieldName | pascalcase }} (one-to-many)</summary>
+{{- $isM2M := eq .RelationType "many-to-many" }}
+{{- if or .IsMany $isM2M }}
+    /// <summary>Inverse navigation: {{ .TargetEntity.Name }}.{{ .FieldName | pascalcase }} ({{ .RelationType }})</summary>
     [JsonIgnore]
     public virtual ICollection<{{ .TargetEntity.Name }}> {{ .InverseNavName | pascalcase }} { get; set; } = new List<{{ .TargetEntity.Name }}>();
 {{- end }}

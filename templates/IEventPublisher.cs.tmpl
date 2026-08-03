@@ -1,0 +1,20 @@
+namespace {{ .Project.Name | pascalcase }}.Application.Events;
+
+/// <summary>
+/// Outbound port for publishing domain events. The domain/services layer depends
+/// only on this interface — never on a concrete broker. The implementation is
+/// selected at DI wiring time:
+///   - InMemoryEventPublisher (default, lightweight monolith)
+///   - DaprEventPublisher (when the project is generated with --addons dapr)
+/// </summary>
+public interface IEventPublisher
+{
+    /// <summary>
+    /// Publish a domain event to the message broker. Implementations must not
+    /// throw on transient broker failures when the event is best-effort.
+    /// </summary>
+    /// <param name="eventName">Event name (e.g. "OrderCreated").</param>
+    /// <param name="payload">Event payload (the affected entity).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task PublishAsync(string eventName, object payload, CancellationToken cancellationToken = default);
+}

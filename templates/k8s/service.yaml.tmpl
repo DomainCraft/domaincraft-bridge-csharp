@@ -1,0 +1,15 @@
+# Kubernetes Service for {{ .Project.Name }} API
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Project.Name | snakecase }}-api
+  labels:
+    app: {{ .Project.Name | snakecase }}-api
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ .Project.Name | snakecase }}-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: {{ .Project.Deploy.Port }}

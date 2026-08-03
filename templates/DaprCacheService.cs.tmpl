@@ -1,0 +1,79 @@
+{{- $proj := .Project.Name | pascalcase }}
+using {{ $proj }}.Application.Caching;
+using Dapr.Client;
+using Microsoft.Extensions.Configuration;
+
+namespace {{ $proj }}.Infrastructure.Caching;
+
+/// <summary>
+/// Distributed cache backed by Dapr's state management building block. Reads and
+/// writes flow through the Dapr sidecar to whatever state store is configured in
+/// dapr/components/statestore.yaml (in-memory, a key/value store, a database...).
+/// Switching the underlying store never touches this code — only the statestore component.
+/// </summary>
+public class DaprCacheService : ICacheService
+{
+    private readonly DaprClient _dapr;
+    private readonly ILogger<DaprCacheService> _logger;
+    private readonly string _storeName;
+    private readonly double _defaultTtlSeconds;
+
+    public DaprCacheService(DaprClient dapr, IConfiguration configuration, ILogger<DaprCacheService> logger)
+    {
+        _dapr = dapr;
+        _logger = logger;
+        _storeName = configuration["Dapr:StateStoreComponent"] ?? "statestore";
+        _defaultTtlSeconds = double.TryParse(configuration["Dapr:CacheTtlSeconds"], out var ttl) ? ttl : 1800;
+    }
+
+    public async Task<T?> GetAsync<T>(string key, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await _dapr.GetStateAsync<T>(_storeName, key, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Dapr state get failed for key {Key}", key);
+            return default;
+        }
+    }
+
+    public async Task SetAsync<T>(string key, T value, TimeSpan? expiration = null, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var ttl = expiration ?? TimeSpan.FromSeconds(_defaultTtlSeconds);
+            var metadata = new Dictionary<string, string>
+            {
+                ["ttlInSeconds"] = Math.Max(1, (long)ttl.TotalSeconds).ToString()
+            };
+            await _dapr.SaveStateAsync(_storeName, key, value, metadata, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Dapr state save failed for key {Key}", key);
+        }
+    }
+
+    public async Task RemoveAsync(string key, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await _dapr.DeleteStateAsync(_storeName, key, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Dapr state delete failed for key {Key}", key);
+        }
+    }
+
+    public async Task RemoveByPrefixAsync(string prefix, CancellationToken cancellationToken = default)
+    {
+        // Dapr state is keyed and typically prefix-scoped per app; bulk prefix
+        // deletes need a state-store query binding. Falling back to per-key eviction
+        // is a no-op here — override via a cacheable custom partial if needed.
+        _logger.LogInformation("Dapr cache does not support bulk prefix eviction; prefix {Prefix} retained", prefix);
+        await Task.CompletedTask;
+    }
+}

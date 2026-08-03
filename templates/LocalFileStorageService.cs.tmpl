@@ -1,0 +1,92 @@
+{{- $proj := .Project.Name | pascalcase }}
+using {{ $proj }}.Application.Storage;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+
+namespace {{ $proj }}.Infrastructure.Storage;
+
+/// <summary>
+/// Default storage implementation for the lightweight monolith: objects are kept
+/// on disk in the folder configured by Storage:RootPath (default "storage", which
+/// docker-compose mounts as a volume). Swap to DaprStorageService (--addons dapr)
+/// to back the same IStorageService with a real object store (S3, Blob, GCS).
+/// </summary>
+public class LocalFileStorageService : IStorageService
+{
+    private readonly string _root;
+    private readonly ILogger<LocalFileStorageService> _logger;
+
+    public LocalFileStorageService(IConfiguration configuration, ILogger<LocalFileStorageService> logger)
+    {
+        _logger = logger;
+        _root = Path.Combine(Environment.CurrentDirectory, configuration["Storage:RootPath"] ?? "storage");
+        Directory.CreateDirectory(_root);
+    }
+
+    private string ResolvePath(string key)
+    {
+        // Normalise the key and prevent path traversal outside the storage root.
+        var safeParts = key
+            .Replace('\\', '/')
+            .Trim('/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Where(part => part != ".." && part != ".");
+        return Path.Combine(new[] { _root }.Concat(safeParts).ToArray());
+    }
+
+    public Task<StoredObject?> GetAsync(string key, CancellationToken cancellationToken = default)
+    {
+        var path = ResolvePath(key);
+        if (!File.Exists(path))
+        {
+            return Task.FromResult<StoredObject?>(null);
+        }
+        try
+        {
+            var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, useAsync: true);
+            return Task.FromResult<StoredObject?>(new StoredObject(stream, Length: stream.Length));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Local storage read failed for key {Key}", key);
+            return Task.FromResult<StoredObject?>(null);
+        }
+    }
+
+    public async Task PutAsync(string key, Stream content, string? contentType = null, CancellationToken cancellationToken = default)
+    {
+        var path = ResolvePath(key);
+        var dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir))
+        {
+            Directory.CreateDirectory(dir);
+        }
+        try
+        {
+            await using var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
+            await content.CopyToAsync(file, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Local storage write failed for key {Key}", key);
+            throw;
+        }
+    }
+
+    public Task DeleteAsync(string key, CancellationToken cancellationToken = default)
+    {
+        var path = ResolvePath(key);
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Local storage delete failed for key {Key}", key);
+        }
+        return Task.CompletedTask;
+    }
+}

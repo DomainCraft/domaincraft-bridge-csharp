@@ -1,0 +1,10 @@
+{{- $queue := "in-memory" -}}
+{{- if and .Project.Infrastructure .Project.Infrastructure.Queue }}{{ $queue = .Project.Infrastructure.Queue }}{{ end -}}
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: pubsub
+spec:
+  type: pubsub.{{ $queue }}
+  version: v1
+  metadata: []

@@ -1,4 +1,6 @@
 {{- $proj := .Project.Name | pascalcase }}
+{{- $hasSeed := false }}
+{{- range .Project.Entities }}{{ if .Seed }}{{ $hasSeed = true }}{{ end }}{{ end }}
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -15,7 +17,9 @@ using Xunit;
 using {{ $proj }}.Domain.Entities;
 using {{ .Project.Name | pascalcase }}.Domain.Shared;
 using {{ $proj }}.Infrastructure.Persistence;
+{{- if $hasSeed }}
 using {{ $proj }}.Infrastructure.Persistence.Seeders;
+{{- end }}
 
 namespace {{ $proj }}.Tests;
 
@@ -28,7 +32,7 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
     private readonly WebApplicationFactory<Program> _factory;
     private readonly HttpClient _client;
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
-    private readonly Dictionary<string, Guid> _createdIds = new();
+    private readonly Dictionary<string, object> _createdIds = new();
     private readonly string _dbName = Guid.NewGuid().ToString();
 
     public ApiTests(WebApplicationFactory<Program> factory)
@@ -47,18 +51,19 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
                     ["Jwt:Audience"] = "test-audience",
 {{- end }}
                     ["ConnectionStrings:PostgreSQL"] = "Host=localhost;Database=test",
-                    ["ConnectionStrings:Redis"] = "",
                     ["TestDb:Name"] = _dbName,
                 });
             });
 
             builder.ConfigureServices(services =>
             {
+{{- if $hasSeed }}
                 // Remove the seeder — tests seed via HTTP endpoints
                 var seederDescriptors = services.Where(d =>
                     d.ImplementationType == typeof(DomainSeeder))
                     .ToList();
                 foreach (var d in seederDescriptors) services.Remove(d);
+{{- end }}
 
                 // Replace cache with no-op for tests
                 var cacheDescriptors = services.Where(d =>
@@ -108,9 +113,9 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
 {{- define "testFieldValue" }}
 {{- if .IsRelation }}
 {{- if .IsNullable }}
-            {{ fkName .Name | pascalcase }} = _createdIds.ContainsKey("{{ .RelationTarget }}") ? _createdIds["{{ .RelationTarget }}"] : (Guid?)null,
+            {{ fkName .Name | pascalcase }} = _createdIds.TryGetValue("{{ .RelationTarget }}", out var {{ fkName .Name | camelcase }}Pk) ? ({{ languageType .DatabaseType true }})({{ fkName .Name | camelcase }}Pk) : null,
 {{- else }}
-            {{ fkName .Name | pascalcase }} = _createdIds.GetValueOrDefault("{{ .RelationTarget }}"),
+            {{ fkName .Name | pascalcase }} = _createdIds.TryGetValue("{{ .RelationTarget }}", out var {{ fkName .Name | camelcase }}Pk) ? ({{ languageType .DatabaseType false }})({{ fkName .Name | camelcase }}Pk) : default,
 {{- end }}
 {{- else if eq .DatabaseType "uuid" }}
             {{ .Name | pascalcase }} = Guid.NewGuid(),
@@ -257,6 +262,13 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
 {{- $deletePublic = isPublicPermission .Permissions.Delete }}
 {{- end }}
 {{- end }}
+{{- $nfId := "00000000-0000-0000-0000-000000000000" }}
+{{- range .Fields }}
+{{- if .IsPrimary }}
+{{- if eq .DatabaseType "int" }}{{ $nfId = "999999" }}{{ end }}
+{{- if eq .DatabaseType "bigint" }}{{ $nfId = "999999" }}{{ end }}
+{{- end }}
+{{- end }}
 
     // ===== {{ .Name }} Tests =====
 
@@ -274,7 +286,7 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
     [Fact]
     public async Task {{ .NamePlural }}_GetById_NotFound_{{ if $readPublic }}ReturnsNotFound{{ else }}ReturnsUnauthorized{{ end }}()
     {
-        var response = await _client.GetAsync("/api/{{ .NamePlural | lowercase }}/00000000-0000-0000-0000-000000000000");
+        var response = await _client.GetAsync("/api/{{ .NamePlural | lowercase }}/{{ $nfId }}");
 {{- if $readPublic }}
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
 {{- else }}
@@ -301,7 +313,7 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
     [Fact]
     public async Task {{ .NamePlural }}_Delete_NotFound_{{ if $deletePublic }}ReturnsNotFound{{ else }}ReturnsUnauthorized{{ end }}()
     {
-        var response = await _client.DeleteAsync("/api/{{ .NamePlural | lowercase }}/00000000-0000-0000-0000-000000000000");
+        var response = await _client.DeleteAsync("/api/{{ .NamePlural | lowercase }}/{{ $nfId }}");
 {{- if $deletePublic }}
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
 {{- else }}
@@ -313,7 +325,7 @@ public class ApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLif
 }
 
 /// <summary>
-/// No-op cache service for tests - avoids Redis dependency
+/// No-op cache service for tests - avoids external cache dependency
 /// </summary>
 internal class NoOpCacheService : {{ $proj }}.Application.Caching.ICacheService
 {

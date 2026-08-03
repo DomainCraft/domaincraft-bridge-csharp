@@ -2,7 +2,8 @@ using System.Runtime.Serialization;
 
 namespace {{ .Project.Name | pascalcase }}.Domain.Shared;
 
-{{- range $enumName, $enumValues := .Project.Enums }}
+{{- range $enumName := $.Project.EnumOrder }}
+{{- $enumValues := index $.Project.Enums $enumName }}
 /// <summary>
 /// Enum: {{ $enumName }}
 /// </summary>

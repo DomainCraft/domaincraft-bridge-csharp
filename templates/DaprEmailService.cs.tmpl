@@ -1,0 +1,46 @@
+{{- $proj := .Project.Name | pascalcase }}
+using {{ $proj }}.Application.Email;
+using Dapr.Client;
+using Microsoft.Extensions.Configuration;
+
+namespace {{ $proj }}.Infrastructure.Email;
+
+/// <summary>
+/// Email sent through Dapr's SMTP output binding. The sidecar hands the message
+/// to whichever mail transport is declared in dapr/components/email.yaml —
+/// swapping providers never touches your code.
+/// </summary>
+public class DaprEmailService : IEmailService
+{
+    private readonly DaprClient _dapr;
+    private readonly ILogger<DaprEmailService> _logger;
+    private readonly string _bindingName;
+
+    public DaprEmailService(DaprClient dapr, IConfiguration configuration, ILogger<DaprEmailService> logger)
+    {
+        _dapr = dapr;
+        _logger = logger;
+        _bindingName = configuration["Dapr:EmailBinding"] ?? "email-smtp";
+    }
+
+    public async Task SendAsync(string to, string subject, string body, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await _dapr.InvokeBindingAsync(
+                _bindingName,
+                "create",
+                new { to, subject, body },
+                metadata: new Dictionary<string, string>
+                {
+                    ["emailTo"] = to,
+                    ["emailSubject"] = subject
+                },
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Dapr email send failed to {To}", to);
+        }
+    }
+}

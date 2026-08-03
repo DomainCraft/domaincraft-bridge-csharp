@@ -27,9 +27,23 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="{{ index .Packages "swashbuckle" }}" />
     <PackageReference Include="Swashbuckle.AspNetCore.Annotations" Version="{{ index .Packages "swashbuckle_annotations" }}" />
     <PackageReference Include="AspNetCore.HealthChecks.NpgSql" Version="{{ index .Packages "healthchecks_npgsql" }}" />
-    <PackageReference Include="AspNetCore.HealthChecks.Redis" Version="{{ index .Packages "healthchecks_redis" }}" />
-    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="{{ index .Packages "redis_cache" }}" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="{{ index .Packages "ef_core_inmemory" }}" />
+    <PackageReference Include="Asp.Versioning.Mvc" Version="{{ index .Packages "versioning" }}" />
+    <PackageReference Include="Asp.Versioning.Mvc.ApiExplorer" Version="{{ index .Packages "versioning_api_explorer" }}" />
+{{- if .Project.HasAddon "dapr" }}
+    <PackageReference Include="Dapr.AspNetCore" Version="{{ index .Packages "dapr" }}" />
+    <PackageReference Include="Hangfire" Version="{{ index .Packages "hangfire" }}" />
+    <PackageReference Include="Hangfire.PostgreSql" Version="{{ index .Packages "hangfire_postgresql" }}" />
+{{- end }}
+{{- if .Project.HasAddon "observability" }}
+    <PackageReference Include="Serilog.AspNetCore" Version="{{ index .Packages "serilog" }}" />
+    <PackageReference Include="Serilog.Settings.Configuration" Version="{{ index .Packages "serilog_settings" }}" />
+    <PackageReference Include="Serilog.Sinks.Seq" Version="{{ index .Packages "serilog_seq" }}" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="{{ index .Packages "serilog_console" }}" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="{{ index .Packages "otel_hosting" }}" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="{{ index .Packages "otel_aspnetcore" }}" />
+    <PackageReference Include="OpenTelemetry.Exporter.Jaeger" Version="{{ index .Packages "otel_jaeger" }}" />
+{{- end }}
   </ItemGroup>
 
   <ItemGroup>
@@ -37,6 +51,12 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="appsettings.Development.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="appsettings.Staging.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="appsettings.Production.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

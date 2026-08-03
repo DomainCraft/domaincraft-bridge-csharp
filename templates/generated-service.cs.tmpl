@@ -1,7 +1,12 @@
 {{- $proj := .Project.Name | pascalcase }}
+{{- $cacheTtl := 300 -}}
+{{- if .Project.Cache }}{{- if ne .Project.Cache.TTLSeconds 0 }}{{ $cacheTtl = .Project.Cache.TTLSeconds }}{{- end }}{{- end }}
+using {{ $proj }}.Application.Caching;
+using {{ $proj }}.Application.Events;
 using {{ $proj }}.Application.Repositories;
 using {{ $proj }}.Application.Services;
 using {{ $proj }}.Domain.Entities;
+using {{ $proj }}.Domain.Shared;
 
 namespace {{ $proj }}.Application.Services;
 
@@ -11,11 +16,38 @@ namespace {{ $proj }}.Application.Services;
 public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
 {
     private readonly I{{ .Entity.Name }}Repository _repository;
+{{- if .HasEventSourced }}
+    private readonly IEventPublisher _eventPublisher;
+{{- end }}
+{{- if .HasCacheable }}
+    private readonly ICacheService _cache;
 
+{{- end }}
+{{- if and .HasEventSourced .HasCacheable }}
+    public {{ .Entity.Name }}Service(I{{ .Entity.Name }}Repository repository, IEventPublisher eventPublisher, ICacheService cache)
+    {
+        _repository = repository ?? throw new ArgumentNullException(nameof(repository));
+        _eventPublisher = eventPublisher ?? throw new ArgumentNullException(nameof(eventPublisher));
+        _cache = cache ?? throw new ArgumentNullException(nameof(cache));
+    }
+{{- else if .HasEventSourced }}
+    public {{ .Entity.Name }}Service(I{{ .Entity.Name }}Repository repository, IEventPublisher eventPublisher)
+    {
+        _repository = repository ?? throw new ArgumentNullException(nameof(repository));
+        _eventPublisher = eventPublisher ?? throw new ArgumentNullException(nameof(eventPublisher));
+    }
+{{- else if .HasCacheable }}
+    public {{ .Entity.Name }}Service(I{{ .Entity.Name }}Repository repository, ICacheService cache)
+    {
+        _repository = repository ?? throw new ArgumentNullException(nameof(repository));
+        _cache = cache ?? throw new ArgumentNullException(nameof(cache));
+    }
+{{- else }}
     public {{ .Entity.Name }}Service(I{{ .Entity.Name }}Repository repository)
     {
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
     }
+{{- end }}
 
     // Business hooks — implement these in the custom partial
     // (src/Application/Services/{{ .Entity.Name }}Service.cs).
@@ -28,9 +60,29 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
         return await _repository.GetAllAsync(cancellationToken);
     }
 
+    public async Task<PagedResult<{{ .Entity.Name }}>> GetPagedAsync(int page, int pageSize, string? sort = null, string? search = null, CancellationToken cancellationToken = default)
+    {
+        return await _repository.GetPagedAsync(page, pageSize, sort, search, cancellationToken);
+    }
+
     public async Task<{{ .Entity.Name }}?> GetByIdAsync(object id, CancellationToken cancellationToken = default)
     {
+{{- if .HasCacheable }}
+        var cacheKey = "{{ .Entity.Name }}:by-id:" + id;
+        var cached = await _cache.GetAsync<{{ .Entity.Name }}>(cacheKey, cancellationToken);
+        if (cached != null)
+        {
+            return cached;
+        }
+        var entity = await _repository.GetByIdAsync(id, cancellationToken);
+        if (entity != null)
+        {
+            await _cache.SetAsync(cacheKey, entity, TimeSpan.FromSeconds({{ $cacheTtl }}), cancellationToken);
+        }
+        return entity;
+{{- else }}
         return await _repository.GetByIdAsync(id, cancellationToken);
+{{- end }}
     }
 
     public async Task<{{ .Entity.Name }}> CreateAsync({{ .Entity.Name }} entity, CancellationToken cancellationToken = default)
@@ -38,6 +90,12 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
         OnBeforeCreate(entity);
         await _repository.AddAsync(entity, cancellationToken);
         await _repository.SaveChangesAsync(cancellationToken);
+{{- if .HasCacheable }}
+        await _cache.RemoveByPrefixAsync("{{ .Entity.Name }}:by-id:", cancellationToken);
+{{- end }}
+{{- if .HasEventSourced }}
+        await _eventPublisher.PublishAsync("{{ .Entity.Name }}Created", entity, cancellationToken);
+{{- end }}
         return entity;
     }
 
@@ -51,6 +109,36 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
         OnBeforeUpdate(entity);
         _repository.Update(entity);
         await _repository.SaveChangesAsync(cancellationToken);
+{{- if .HasCacheable }}
+        await _cache.RemoveByPrefixAsync("{{ .Entity.Name }}:by-id:", cancellationToken);
+{{- end }}
+{{- if .HasEventSourced }}
+        await _eventPublisher.PublishAsync("{{ .Entity.Name }}Updated", entity, cancellationToken);
+{{- end }}
+        return entity;
+    }
+
+    public async Task<{{ .Entity.Name }}?> UpdatePartialAsync(object id, {{ .Entity.Name }} entity, CancellationToken cancellationToken = default)
+    {
+        var existing = await _repository.GetByIdAsync(id, cancellationToken);
+        if (existing == null)
+        {
+            return null;
+        }
+        OnBeforeUpdate(entity);
+{{- if .HasCacheable }}
+        // Cacheable: GetByIdAsync may have returned a detached cached instance, so it is
+        // not change-tracked here. Attach it explicitly with the patched values applied;
+        // the cached copy holds the pre-patch values for untouched properties.
+        _repository.Update(entity);
+{{- else }}
+        // The caller has already returned this instance from GetByIdAsync, so EF change
+        // tracking marks only the modified properties; do not call _repository.Update.
+{{- end }}
+        await _repository.SaveChangesAsync(cancellationToken);
+{{- if .HasCacheable }}
+        await _cache.RemoveByPrefixAsync("{{ .Entity.Name }}:by-id:", cancellationToken);
+{{- end }}
         return entity;
     }
 
@@ -69,12 +157,12 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
         _repository.Delete(existing);
 {{- end }}
         await _repository.SaveChangesAsync(cancellationToken);
+{{- if .HasCacheable }}
+        await _cache.RemoveByPrefixAsync("{{ .Entity.Name }}:by-id:", cancellationToken);
+{{- end }}
+{{- if .HasEventSourced }}
+        await _eventPublisher.PublishAsync("{{ .Entity.Name }}Deleted", existing, cancellationToken);
+{{- end }}
         return true;
-    }
-
-    public async Task SeedAsync(IEnumerable<{{ .Entity.Name }}> entities, CancellationToken cancellationToken = default)
-    {
-        await _repository.AddRangeAsync(entities, cancellationToken);
-        await _repository.SaveChangesAsync(cancellationToken);
     }
 }

@@ -1,5 +1,6 @@
 {{- $proj := .Project.Name | pascalcase }}
 using {{ $proj }}.Domain.Entities;
+using {{ $proj }}.Domain.Shared;
 
 namespace {{ $proj }}.Application.Services;
 
@@ -13,6 +14,9 @@ public interface I{{ .Entity.Name }}Service
     /// <summary>Get all {{ .Entity.NamePlural | lowercase }}</summary>
     Task<List<{{ .Entity.Name }}>> GetAllAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>Get a page of {{ .Entity.NamePlural | lowercase }}, optionally sorted and searched</summary>
+    Task<PagedResult<{{ .Entity.Name }}>> GetPagedAsync(int page, int pageSize, string? sort = null, string? search = null, CancellationToken cancellationToken = default);
+
     /// <summary>Get a {{ .Entity.Name | lowercase }} by ID</summary>
     Task<{{ .Entity.Name }}?> GetByIdAsync(object id, CancellationToken cancellationToken = default);
 
@@ -22,9 +26,10 @@ public interface I{{ .Entity.Name }}Service
     /// <summary>Update a {{ .Entity.Name | lowercase }} (runs the OnBeforeUpdate hook). Returns null when not found.</summary>
     Task<{{ .Entity.Name }}?> UpdateAsync(object id, {{ .Entity.Name }} entity, CancellationToken cancellationToken = default);
 
+    /// <summary>Partial (merge-patch) update a {{ .Entity.Name | lowercase }}. The entity is assumed
+    /// change-tracked; only its modified properties are persisted. Returns null when not found.</summary>
+    Task<{{ .Entity.Name }}?> UpdatePartialAsync(object id, {{ .Entity.Name }} entity, CancellationToken cancellationToken = default);
+
     /// <summary>Delete a {{ .Entity.Name | lowercase }} by ID (runs the OnBeforeDelete hook). Returns false when not found.</summary>
     Task<bool> DeleteAsync(object id, CancellationToken cancellationToken = default);
-
-    /// <summary>Seed multiple {{ .Entity.NamePlural | lowercase }} in one batch</summary>
-    Task SeedAsync(IEnumerable<{{ .Entity.Name }}> entities, CancellationToken cancellationToken = default);
 }

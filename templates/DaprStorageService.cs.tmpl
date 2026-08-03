@@ -1,0 +1,88 @@
+{{- $proj := .Project.Name | pascalcase }}
+using {{ $proj }}.Application.Storage;
+using Dapr.Client;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+
+namespace {{ $proj }}.Infrastructure.Storage;
+
+/// <summary>
+/// Object storage backed by Dapr's output bindings. Reads and writes flow through
+/// the Dapr sidecar to whatever store is declared in dapr/components/storage.yaml —
+/// local disk (bindings.localstorage), S3 (bindings.aws.s3), Azure Blob
+/// (bindings.azure.blobstorage) or GCS (bindings.gcp.gcs). Swapping the store is a
+/// component change, never a code change.
+/// </summary>
+public class DaprStorageService : IStorageService
+{
+    private readonly DaprClient _dapr;
+    private readonly ILogger<DaprStorageService> _logger;
+    private readonly string _bindingName;
+
+    public DaprStorageService(DaprClient dapr, IConfiguration configuration, ILogger<DaprStorageService> logger)
+    {
+        _dapr = dapr;
+        _logger = logger;
+        _bindingName = configuration["Dapr:StorageBinding"] ?? "storage";
+    }
+
+    public async Task<StoredObject?> GetAsync(string key, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var bytes = await _dapr.InvokeBindingAsync<byte[]>(
+                _bindingName,
+                "get",
+                data: null,
+                metadata: new Dictionary<string, string> { ["key"] = key },
+                cancellationToken);
+            if (bytes == null || bytes.Length == 0)
+            {
+                return null;
+            }
+            return new StoredObject(new MemoryStream(bytes), Length: bytes.Length);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Dapr storage get failed for key {Key}", key);
+            return null;
+        }
+    }
+
+    public async Task PutAsync(string key, Stream content, string? contentType = null, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var buffer = new MemoryStream();
+            await content.CopyToAsync(buffer, cancellationToken);
+            var metadata = new Dictionary<string, string> { ["key"] = key };
+            if (!string.IsNullOrEmpty(contentType))
+            {
+                metadata["contentType"] = contentType;
+            }
+            await _dapr.InvokeBindingAsync(_bindingName, "create", buffer.ToArray(), metadata, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Dapr storage write failed for key {Key}", key);
+            throw;
+        }
+    }
+
+    public async Task DeleteAsync(string key, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await _dapr.InvokeBindingAsync(
+                _bindingName,
+                "delete",
+                data: null,
+                metadata: new Dictionary<string, string> { ["key"] = key },
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Dapr storage delete failed for key {Key}", key);
+        }
+    }
+}

@@ -1,0 +1,31 @@
+namespace {{ .Project.Name | pascalcase }}.Application.Storage;
+
+/// <summary>
+/// A stored object returned by read operations.
+/// </summary>
+public sealed record StoredObject(Stream Content, string? ContentType = null, long Length = 0);
+
+/// <summary>
+/// Object / file storage port. Developers depend on this abstraction and never
+/// talk to a concrete bucket directly. The default project uses a local folder
+/// (LocalFileStorageService); with --addons dapr the same keys are routed through
+/// the Dapr storage output binding (local disk, S3, Azure Blob or GCS) declared
+/// in dapr/components/storage.yaml.
+/// </summary>
+public interface IStorageService
+{
+    /// <summary>
+    /// Read the object with the given key, or null when it does not exist.
+    /// </summary>
+    Task<StoredObject?> GetAsync(string key, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Store a stream under the given key.
+    /// </summary>
+    Task PutAsync(string key, Stream content, string? contentType = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Delete the object with the given key. No-op when it does not exist.
+    /// </summary>
+    Task DeleteAsync(string key, CancellationToken cancellationToken = default);
+}

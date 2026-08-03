@@ -18,7 +18,11 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="{{ index .Packages "ef_core_relational" }}" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="{{ index .Packages "npgsql_ef" }}" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="{{ index .Packages "logging_abstractions" }}" />
-    <PackageReference Include="StackExchange.Redis" Version="{{ index .Packages "stackexchange_redis" }}" />
-    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="{{ index .Packages "redis_cache" }}" />
+{{- if .Project.HasAddon "dapr" }}
+    <PackageReference Include="Dapr.Client" Version="{{ index .Packages "dapr" }}" />
+{{- end }}
+{{- if .Project.HasAuth }}
+    <PackageReference Include="BCrypt.Net-Next" Version="{{ index .Packages "bcrypt" }}" />
+{{- end }}
   </ItemGroup>
 </Project>
