@@ -100,11 +100,22 @@ public class {{ .Entity.Name }}Configuration : IEntityTypeConfiguration<{{ .Enti
             .IsRequired({{ if .IsNullable }}false{{ else }}true{{ end }});
         builder.Property(e => e.{{ $fkName }}).HasColumnName("{{ $fkColName }}");
 {{- else }}
+{{- if eq .RelationType "one-to-many" }}
+        // One-to-many declared from both sides: {{ .FieldName }} <-> {{ .TargetEntity.Name }}.{{ .PairFieldName }}
+        // FK {{ .PairFieldName }}Id lives on {{ .TargetEntity.Name }}.
+        builder
+            .HasMany(e => e.{{ .FieldName | pascalcase }})
+            .WithOne(e => e.{{ .PairFieldName | pascalcase }})
+            .HasForeignKey(e => e.{{ fkName .PairFieldName | pascalcase }})
+            .OnDelete(DeleteBehavior.{{ deleteBehaviorName .OnDeleteBehavior }})
+            .IsRequired({{ if .IsNullable }}false{{ else }}true{{ end }});
+{{- else }}
         // Many-to-many join: {{ .FieldName }} <-> {{ .InverseNavName | pascalcase }}
         // EF Core creates the join table; the inverse collection lives on the target entity.
         builder
             .HasMany(e => e.{{ .FieldName | pascalcase }})
             .WithMany(e => e.{{ .InverseNavName | pascalcase }});
+{{- end }}
 {{- end }}
 {{- end }}
 
