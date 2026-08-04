@@ -40,6 +40,12 @@ public class {{ .Entity.Name }}Repository : I{{ .Entity.Name }}Repository
         return await query.FirstOrDefaultAsync(e => e.{{ .PrimaryKey.Name | pascalcase }} == ({{ languageType .PrimaryKey.DatabaseType false }})id, cancellationToken);
     }
 
+    public async Task<{{ .Entity.Name }}?> GetOriginalAsync(object id, CancellationToken cancellationToken = default)
+    {
+        return await _dbSet.AsNoTracking()
+            .FirstOrDefaultAsync(e => e.{{ .PrimaryKey.Name | pascalcase }} == ({{ languageType .PrimaryKey.DatabaseType false }})id, cancellationToken);
+    }
+
     public async Task<PagedResult<{{ .Entity.Name }}>> GetPagedAsync(int page, int pageSize, string? sort = null, string? search = null, CancellationToken cancellationToken = default)
     {
         page = Math.Max(1, page);

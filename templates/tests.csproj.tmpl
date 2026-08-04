@@ -11,7 +11,8 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="{{ index .Packages "mvc_testing" }}" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="{{ index .Packages "ef_core_inmemory" }}" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="{{ index .Packages "testcontainers" }}" />
+    <PackageReference Include="Npgsql" Version="{{ index .Packages "npgsql" }}" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="{{ index .Packages "test_sdk" }}" />
     <PackageReference Include="xunit" Version="{{ index .Packages "xunit" }}" />
     <PackageReference Include="xunit.runner.visualstudio" Version="{{ index .Packages "xunit_runner" }}" />

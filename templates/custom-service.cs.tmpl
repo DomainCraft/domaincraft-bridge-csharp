@@ -25,4 +25,21 @@ public partial class {{ .Entity.Name }}Service
     // partial void OnBeforeDelete({{ .Entity.Name }} entity)
     // {
     // }
+
+    // Runs after a new {{ .Entity.Name }} is committed. The entity already has its
+    // server-generated values (Id, computed `readonly` fields, timestamps).
+    // Use for side effects: send email, publish integration events, notify.
+    // partial void OnAfterCreate({{ .Entity.Name }} entity)
+    // {
+    // }
+
+    // Runs after an existing {{ .Entity.Name }} is committed.
+    // partial void OnAfterUpdate({{ .Entity.Name }} entity)
+    // {
+    // }
+
+    // Runs after a {{ .Entity.Name }} is deleted (or soft-deleted).
+    // partial void OnAfterDelete({{ .Entity.Name }} entity)
+    // {
+    // }
 }

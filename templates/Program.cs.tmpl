@@ -46,11 +46,31 @@ var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "{{ .Project.Name }}-
 // Add services
 if (builder.Environment.IsEnvironment("Testing"))
 {
-    var testDbName = builder.Configuration["TestDb:Name"] ?? "TestDb";
-    builder.Services.AddDbContext<DomainDbContext>(options =>
+    // Integration tests run against a real PostgreSQL via Testcontainers, so FK constraints,
+    // unique indexes, on_delete cascades and SQL translation match production exactly.
+    var testConn = builder.Configuration["TestDb:ConnectionString"];
+    if (!string.IsNullOrEmpty(testConn))
     {
-        options.UseInMemoryDatabase(testDbName);
-    });
+        builder.Services.AddDbContextPool<DomainDbContext>(options =>
+        {
+            options.UseNpgsql(testConn, npg =>
+            {
+                npg.MigrationsAssembly("{{ .Project.Name | pascalcase }}.Infrastructure");
+                npg.EnableRetryOnFailure(3);
+                npg.CommandTimeout(30);
+            });
+        }, poolSize: 128);
+    }
+    else
+    {
+        // Fallback only when no connection string is supplied (e.g. no Docker available):
+        // the in-memory mock. Generated tests always pass TestDb:ConnectionString.
+        var testDbName = builder.Configuration["TestDb:Name"] ?? "TestDb";
+        builder.Services.AddDbContext<DomainDbContext>(options =>
+        {
+            options.UseInMemoryDatabase(testDbName);
+        });
+    }
 }
 else
 {
@@ -167,15 +187,22 @@ builder.Services.AddAuthorization(options =>
 {{- if eq $op "Update" }}{{ $roles = $perms.Update }}{{ end -}}
 {{- if eq $op "Delete" }}{{ $roles = $perms.Delete }}{{ end -}}
 {{- if and $roles (not (isPublicPermission $roles)) }}
+{{- /* Role lists are OR (any role passes), and "@Owner" is validated in the
+       controller via IPermissionService (owner OR explicit role). Building the
+       policy with multiple policy.RequireRole(...) calls would mean AND, so we
+       emit a single RequireAssertion that ORs the explicit roles instead. */ -}}
+{{- $hasOwner := false }}
+{{- $explicit := list }}
+{{- range $roles }}
+{{- if hasPrefix "@" . }}{{ $hasOwner = true }}{{- else if ne . "*" }}{{ $explicit = append $explicit . }}{{- end }}
+{{- end }}
     options.AddPolicy("{{ .Name }}{{ $op }}", policy =>
     {
-{{- range $roles }}
-{{- if hasPrefix "@" . }}
-        // Ownership-based: {{ . }} — resolved at runtime via IPermissionService
         policy.RequireAuthenticatedUser();
-{{- else if ne . "*" }}
-        policy.RequireRole("{{ . }}");
-{{- end }}
+{{- if $hasOwner }}
+        // @Owner and role checks are enforced in the controller (owner OR explicit role).
+{{- else if gt (len $explicit) 0 }}
+        policy.RequireAssertion(context =>{{ range $i, $r := $explicit }}{{ if $i }} ||{{ end }} context.User.IsInRole("{{ $r }}"){{ end }});
 {{- end }}
     });
 {{- end }}
@@ -215,7 +242,11 @@ builder.Services.AddApiVersioning(options =>
 {
     // URLs stay clean (no version segment); a specific version satisfies
     // unversioned calls. Controllers opt in with [ApiVersion("{{ .Project.Versioning.DefaultVersion }}")].
-    options.DefaultApiVersion = new ApiVersion("{{ .Project.Versioning.DefaultVersion }}");
+{{- $verParts := splitList "." (.Project.Versioning.DefaultVersion) }}
+{{- $verMajor := index $verParts 0 | atoi }}
+{{- $verMinor := 0 }}
+{{- if gt (len $verParts) 1 }}{{ $verMinor = index $verParts 1 | atoi }}{{ end }}
+    options.DefaultApiVersion = new ApiVersion({{ $verMajor }}, {{ $verMinor }});
     options.AssumeDefaultVersionWhenUnspecified = true;
     options.ReportApiVersions = true;
 }).AddApiExplorer(options =>
@@ -372,6 +403,27 @@ app.UseAuthorization();
 {{- end }}
 
 app.UseOutputCache();
+
+// Map data-layer exceptions to meaningful HTTP status codes instead of a bare 500:
+//   DbUpdateConcurrencyException — an optimistic-lock version conflict (409),
+//   DbUpdateException           — a FK/unique/constraint violation (409).
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (DbUpdateConcurrencyException)
+    {
+        context.Response.StatusCode = StatusCodes.Status409Conflict;
+        await context.Response.WriteAsJsonAsync(new { message = "Concurrency conflict: the resource was modified by another request" });
+    }
+    catch (DbUpdateException ex)
+    {
+        context.Response.StatusCode = StatusCodes.Status409Conflict;
+        await context.Response.WriteAsJsonAsync(new { message = "A database constraint was violated", detail = ex.Message });
+    }
+});
 
 app.MapControllers();
 

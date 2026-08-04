@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Security.Claims;
 using System.Reflection;
@@ -6,13 +7,51 @@ using System.Reflection;
 namespace {{ .Project.Name | pascalcase }}.Application.Security;
 
 /// <summary>
-/// Basic owner resolver that inspects common owner property names (OwnerId, AuthorId, UserId)
-/// via reflection and compares them to the current principal's NameIdentifier claim.
-/// Bridges may replace this with more advanced logic.
+/// Data-driven owner resolver, generated from the domain model.
+///
+/// For every entity that uses the "@Owner" token, ownership is resolved against
+/// the auth entity ({{ if and .Project.Auth (ne .Project.Auth.Type "none") }}{{ .Project.Auth.Entity }}{{ else }}<auth disabled>{{ end }}):
+///   - the entity's own primary key (for the auth entity itself), and
+///   - every foreign-key property that points at the auth entity (e.g.
+///     Wallet.OwnerId, EscrowContract.BuyerId / SellerId), and
+///   - the audit-log "CreatedBy" column when the entity has audit_log.
+///
+/// The mapping is computed at generation time so "@Owner" keeps working when the
+/// owner column has any name — the resolver no longer guesses from a hardcoded
+/// list. Replace this class with a custom IOwnerResolver when you need richer
+/// rules (e.g. two-hop ownership through a parent entity).
 /// </summary>
 public class OwnerResolver : IOwnerResolver
 {
-    private static readonly string[] OwnerPropertyNames = new[] { "OwnerId", "AuthorId", "UserId", "CreatedBy" };
+    private static readonly Dictionary<string, string[]> EntityOwnerProperties = new(StringComparer.OrdinalIgnoreCase)
+    {
+{{- if and .Project.Auth (ne .Project.Auth.Type "none") }}
+{{- $authEntity := .Project.Auth.Entity }}
+{{- range .Project.Entities }}
+{{- $ownerFields := list }}
+{{- if eq .Name $authEntity }}
+{{- range .Fields }}{{- if .IsPrimary }}{{ $ownerFields = append $ownerFields (.Name | pascalcase) }}{{- end }}{{- end }}
+{{- end }}
+{{- range .Fields }}
+{{- if and .IsRelation (not .IsMany) (not (isFeatureField .Name)) }}
+{{- if eq .RelationTarget $authEntity }}
+{{- $ownerFields = append $ownerFields (fkName .Name | pascalcase) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- range .Fields }}
+{{- if and (not .IsRelation) (eq (.Name | lower) "createdby") }}
+{{- $ownerFields = append $ownerFields (.Name | pascalcase) }}
+{{- end }}
+{{- end }}
+{{- if gt (len $ownerFields) 0 }}
+        { "{{ .Name }}", new[] { {{- range $i, $f := $ownerFields }}{{ if $i }}, {{ end }}"{{ $f }}"{{- end }} } },
+{{- else }}
+        { "{{ .Name }}", Array.Empty<string>() },
+{{- end }}
+{{- end }}
+{{- end }}
+    };
 
     public bool IsOwner(ClaimsPrincipal user, object entity)
     {
@@ -21,7 +60,12 @@ public class OwnerResolver : IOwnerResolver
         var idClaim = user.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? user.FindFirst("sub")?.Value;
         if (string.IsNullOrWhiteSpace(idClaim)) return false;
 
-        foreach (var propName in OwnerPropertyNames)
+        if (!EntityOwnerProperties.TryGetValue(entity.GetType().Name, out var props) || props.Length == 0)
+        {
+            return false;
+        }
+
+        foreach (var propName in props)
         {
             var prop = entity.GetType().GetProperty(propName, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
             if (prop == null) continue;

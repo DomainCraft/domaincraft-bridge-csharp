@@ -26,7 +26,11 @@ JsonDocument.Parse({{ jsonValue $value }}, default)
 {{- else if or (eq $csType "int") (eq $csType "long") (eq $csType "double") (eq $csType "decimal") (eq $csType "bool") -}}
 {{ rawSeedValue $value $field.DatabaseType }}
 {{- else if eq $csType "string" -}}
+{{- if and .HasAuth $field.Name (eq (lower $field.Name) "password") (not (hasPrefix "$2" (toString $value))) -}}
+_passwordHasher.HashPassword({{ jsonValue $value }})
+{{- else -}}
 {{ jsonValue $value }}
+{{- end -}}
 {{- else -}}
 Enum.Parse<{{ $csType }}>({{ $value | pascalcase | jsonValue }})
 {{- end -}}
@@ -220,6 +224,7 @@ Enum.Parse<{{ $csType }}>({{ $value | pascalcase | jsonValue }})
 {{- end -}}
 
 {{- /* permissionPolicyBlock generates the authorization policy registration for one CRUD operation.
+     Role lists are OR (any role passes). @Owner tokens are enforced in the controller.
      Context: dict with "Op" (string), "Project" (*IRProject). */ -}}
 {{- define "permissionPolicyBlock" -}}
 {{- $op := .Op -}}
@@ -228,16 +233,16 @@ Enum.Parse<{{ $csType }}>({{ $value | pascalcase | jsonValue }})
 {{- if $perms }}
 {{- $roles := index $perms $op }}
 {{- if and $roles (ne (index $roles 0) "*") }}
+{{- $hasOwner := false }}
+{{- $explicit := list }}
+{{- range $roles }}{{- if hasPrefix "@" . }}{{ $hasOwner = true }}{{- else if ne . "*" }}{{ $explicit = append $explicit . }}{{- end }}{{- end }}
             policy.AddPolicy("{{ .Name }}{{ $op }}", p =>
             {
                 p.RequireAuthenticatedUser();
-{{- if hasOwnershipToken $roles }}
-                // Ownership-based access is handled in the controller
-{{- end }}
-{{- range $roles }}
-{{- if not (hasPrefix "@" .) }}
-                p.RequireRole("{{ . }}");
-{{- end }}
+{{- if $hasOwner }}
+                // @Owner and role checks are enforced in the controller.
+{{- else if gt (len $explicit) 0 }}
+                p.RequireAssertion(context =>{{ range $i, $r := $explicit }}{{ if $i }} ||{{ end }} context.User.IsInRole("{{ $r }}"){{ end }});
 {{- end }}
             });
 {{- end }}

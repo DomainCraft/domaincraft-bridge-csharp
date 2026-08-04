@@ -1,8 +1,12 @@
+{{- $hasAuth := .Project.HasAuth }}
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+{{- if $hasAuth }}
+using {{ .Project.Name | pascalcase }}.Application.Security;
+{{- end }}
 using {{ .Project.Name | pascalcase }}.Domain.Entities;
 using {{ .Project.Name | pascalcase }}.Domain.Shared;
 using {{ .Project.Name | pascalcase }}.Infrastructure.Persistence;
@@ -13,17 +17,29 @@ namespace {{ .Project.Name | pascalcase }}.Infrastructure.Persistence.Seeders;
 /// <summary>
 /// Database seeder that applies seed data into the database.
 /// seedValueExpression is defined in _helpers.cs.tmpl (loaded via bridge.yaml helpers).
+/// Password-typed seed fields are hashed through IPasswordHasher so a plaintext value in
+/// domain.yaml never lands in the database; pre-hashed (bcrypt, "$2...") values pass through.
 /// </summary>
 public class DomainSeeder
 {
     private readonly DomainDbContext _context;
     private readonly ILogger<DomainSeeder> _logger;
+{{- if $hasAuth }}
+    private readonly IPasswordHasher _passwordHasher;
 
+    public DomainSeeder(DomainDbContext context, ILogger<DomainSeeder> logger, IPasswordHasher passwordHasher)
+    {
+        _context = context ?? throw new ArgumentNullException(nameof(context));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _passwordHasher = passwordHasher ?? throw new ArgumentNullException(nameof(passwordHasher));
+    }
+{{- else }}
     public DomainSeeder(DomainDbContext context, ILogger<DomainSeeder> logger)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
+{{- end }}
 
     /// <summary>
     /// Seed the database with initial data.
@@ -81,7 +97,7 @@ public class DomainSeeder
 {{- if $field }}
 {{- $target := $k | pascalcase -}}
 {{- if $field.IsRelation }}{{ $target = fkName $k | pascalcase }}{{ end }}
-                    {{ $target }} = {{ template "seedValueExpression" (dict "Field" $field "Value" $v) }},
+                    {{ $target }} = {{ template "seedValueExpression" (dict "Field" $field "Value" $v "HasAuth" $hasAuth) }},
 {{- else }}
                     {{ $k | pascalcase }} = {{ jsonValue $v }},
 {{- end }}

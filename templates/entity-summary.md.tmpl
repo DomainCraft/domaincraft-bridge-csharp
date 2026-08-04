@@ -7,10 +7,10 @@
 
 ## Fields
 
-| Field | Type | Required | Nullable | Primary | Hidden | Details |
-|-------|------|----------|----------|---------|--------|---------|
+| Field | Type | Required | Nullable | Primary | Hidden | Readonly | Details |
+|-------|------|----------|----------|---------|--------|----------|---------|
 {{- range .Entity.Fields }}
-| `{{ .Name }}` | `{{ languageType .DatabaseType .IsNullable }}` | {{ if .IsNullable }}No{{ else }}Yes{{ end }} | {{ if .IsNullable }}Yes{{ else }}No{{ end }} | {{ if .IsPrimary }}✓{{ else }}-{{ end }} | {{ if .IsHidden }}✓{{ else }}-{{ end }} | {{ if .IsUnique }}Unique{{ end }} {{ if .DefaultValue }}Default: `{{ .DefaultValue }}`{{ end }} |
+| `{{ .Name }}` | `{{ languageType .DatabaseType .IsNullable }}` | {{ if .IsNullable }}No{{ else }}Yes{{ end }} | {{ if .IsNullable }}Yes{{ else }}No{{ end }} | {{ if .IsPrimary }}✓{{ else }}-{{ end }} | {{ if .IsHidden }}✓{{ else }}-{{ end }} | {{ if .IsReadonly }}✓{{ else }}-{{ end }} | {{ if .IsUnique }}Unique{{ end }} {{ if .DefaultValue }}Default: `{{ .DefaultValue }}`{{ end }} |
 {{- end }}
 
 ## Relationships

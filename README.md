@@ -14,7 +14,7 @@ Generated/
 │   ├── Infrastructure/   # EF Core, repositories, seeders, caching (Dapr / in-memory)
 │   └── WebApi/           # Controllers, auth, health checks, Docker
 ├── tests/
-│   └── ApiTests.cs       # Integration tests with InMemory DB
+│   └── ApiTests.cs       # Integration tests: WebApplicationFactory + Testcontainers (real PostgreSQL)
 ├── EcommercePlatform.sln
 ├── Dockerfile
 └── docker-compose.yml
@@ -30,7 +30,7 @@ Every entity gets a `partial class` service split across two files:
 
 | File | Behavior |
 |------|----------|
-| `src/Application/Generated/<Entity>Service.g.cs` | **Regenerated on every run.** CRUD logic, soft-delete handling, and `partial void OnBeforeCreate / OnBeforeUpdate / OnBeforeDelete` hooks (no body). |
+| `src/Application/Generated/<Entity>Service.g.cs` | **Regenerated on every run.** CRUD logic, soft-delete handling, and `partial void OnBeforeCreate/OnBeforeUpdate/OnBeforeDelete` hooks (pre-commit) + `partial void OnAfterCreate/OnAfterUpdate/OnAfterDelete` hooks (post-commit, for side effects). No body. |
 | `src/Application/Services/<Entity>Service.cs` | **Generated once** (`overwrite: false`), owned by you. Implement the hooks to add custom business logic. |
 
 Controllers talk to the `I<Entity>Service` interface, and DI resolves it to the *merged* partial
@@ -77,6 +77,7 @@ never in `src/Application/Generated/`.
 | **Event Published** | Done | `event_sourced` entities publish `X Created/Updated/Deleted` via `IEventPublisher` |
 | **Validations** | Done | `required`, `unique`, `email`, `url`, `min`, `max`, `gte`, `lte`, `gt`, `lt`, `regex`. String min/max → `[StringLength]`; numeric bounds → `[Range]`; email/url/regex → data annotations; `unique` → index |
 | **Hidden Fields** | Done | Fields marked `hidden` excluded from API responses; the auth entity's `password` field is always hidden from DTOs/requests/patch — it is only ever set through the auth controller (BCrypt) |
+| **Readonly Fields** | Done | Fields marked `readonly` (`balance: decimal [required, readonly, gte:0]`) stay in API responses but are excluded from Create/Update/PATCH requests and request→entity mapping — server-owned values the client can read but never set |
 
 ### Architecture & Patterns
 
@@ -96,7 +97,7 @@ never in `src/Application/Generated/`.
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| **JWT Authentication** | Done | Full JWT bearer with configurable secret, issuer, audience |
+| **JWT Authentication** | Done | Full JWT bearer with configurable secret, issuer, audience; auth controller goes through an `IAuthService` port (Generation Gap partials: `Generated/AuthService.g.cs` + custom `Services/AuthService.cs` with `OnBeforeRegister` hook) — no `DbContext` in the controller |
 | **Pagination / Sort / Search** | Done | `PagedResult<T>` on every list endpoint (`?page=&pageSize=&sort=-field&q=`); DB-side paging, typed sort keys, string search |
 | **Authorization Policies** | Done | Auto-generated per-entity policies (e.g. `ProductRead`, `OrderCreate`) |
 | **Wildcard Permissions** | Done | `*` maps to `[AllowAnonymous]` on controllers |
@@ -119,7 +120,7 @@ never in `src/Application/Generated/`.
 | **Docker** | Done | Multi-stage `Dockerfile` + `docker-compose.yml` with PostgreSQL, API |
 | **Swagger/OpenAPI** | Done | Enabled in development mode |
 | **CORS** | Done | Configurable policy |
-| **Integration Tests** | Done | xUnit + `WebApplicationFactory` + EF Core InMemory provider |
+| **Integration Tests** | Done | xUnit + `WebApplicationFactory` + Testcontainers PostgreSQL (real FK/cascade/SQL) |
 | **Test Data Generation** | Done | Smart defaults: email fields → valid email, enum fields → default value |
 
 ## Dapr Addon (`--addons dapr`)
@@ -299,7 +300,7 @@ Permissions map directly from `domain.yaml` to ASP.NET Core authorization:
 | `dbcontext.cs.tmpl` | `DbContext` with entity registration |
 | `repository*.tmpl` | Repository interfaces and implementations |
 | `iservice.cs.tmpl` | Per-entity `I<Entity>Service` interfaces |
-| `generated-service.cs.tmpl` | Regenerated `partial` services with `OnBeforeCreate/Update/Delete` hooks |
+| `generated-service.cs.tmpl` | Regenerated `partial` services with `OnBeforeCreate/Update/Delete` + `OnAfterCreate/Update/Delete` hooks |
 | `custom-service.cs.tmpl` | Developer-owned `overwrite: false` partial services |
 | `service-registration.cs.tmpl` | Application DI (`I<Entity>Service → <Entity>Service`) |
 | `permissions.cs.tmpl` | Permission policy definitions |

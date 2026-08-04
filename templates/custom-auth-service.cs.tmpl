@@ -1,0 +1,18 @@
+{{- $proj := .Project.Name | pascalcase }}
+{{- $auth := .Project.Auth.Entity }}
+using {{ $proj }}.Domain.Entities;
+
+namespace {{ $proj }}.Application.Services;
+
+/// <summary>
+/// Developer-owned implementation for the {{ $auth }} auth flow.
+/// Generated once (overwrite: false) — DomainCraft never overwrites this file,
+/// so you can safely add custom business logic here.
+/// </summary>
+public partial class AuthService
+{
+    // Runs before a new {{ $auth }} is saved (registration).
+    // partial void OnBeforeRegister({{ $auth }} entity)
+    // {
+    // }
+}

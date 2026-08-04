@@ -1,0 +1,87 @@
+{{- $proj := .Project.Name | pascalcase }}
+{{- $auth := .Project.Auth.Entity }}
+{{- $authPk := "Id" }}
+{{- $authPkType := "Guid" }}
+{{- range .Project.Entities }}
+{{- if eq .Name $auth }}
+{{- range .Fields }}
+{{- if .IsPrimary }}{{ $authPk = .Name | pascalcase }}{{ $authPkType = languageType .DatabaseType false }}{{ end }}
+{{- end }}
+{{- end }}
+{{- end }}
+using {{ $proj }}.Application.Repositories;
+using {{ $proj }}.Application.Security;
+using {{ $proj }}.Application.Services;
+using {{ $proj }}.Domain.Entities;
+using {{ $proj }}.Domain.Shared;
+
+namespace {{ $proj }}.Application.Services;
+
+// AUTO-GENERATED — DO NOT EDIT. Regenerated on every `domaincraft generate`.
+// Implement the partial hooks in src/Application/Services/AuthService.cs
+// (overwrite: false) to customize behavior without losing your changes.
+#nullable enable
+public partial class AuthService : IAuthService
+{
+    private readonly I{{ $auth }}Repository _repository;
+    private readonly IPasswordHasher _passwordHasher;
+
+    public AuthService(I{{ $auth }}Repository repository, IPasswordHasher passwordHasher)
+    {
+        _repository = repository ?? throw new ArgumentNullException(nameof(repository));
+        _passwordHasher = passwordHasher ?? throw new ArgumentNullException(nameof(passwordHasher));
+    }
+
+    // Business hook — implement in the custom partial
+    // (src/Application/Services/AuthService.cs).
+    partial void OnBeforeRegister({{ $auth }} entity);
+
+    public async Task<{{ $auth }}?> LoginAsync(string email, string password, CancellationToken cancellationToken = default)
+    {
+        var matches = await _repository.FindAsync(e => e.Email == email, cancellationToken);
+        var entity = matches.FirstOrDefault();
+        if (entity == null || !_passwordHasher.VerifyPassword(entity.Password, password))
+        {
+            return null;
+        }
+        return entity;
+    }
+
+    public async Task<bool> EmailExistsAsync(string email, CancellationToken cancellationToken = default)
+    {
+        return await _repository.AnyAsync(e => e.Email == email, cancellationToken);
+    }
+
+    public async Task<{{ $auth }}> RegisterAsync(string email, string password, CancellationToken cancellationToken = default)
+    {
+        var entity = new {{ $auth }}
+        {
+{{- if eq $authPkType "Guid" }}
+            {{ $authPk }} = Guid.NewGuid(),
+{{- end }}
+            Email = email,
+            Password = _passwordHasher.HashPassword(password),
+{{- range .Project.Entities }}
+{{- if eq .Name $auth }}
+{{- range .Fields }}
+            {{- if and (not .IsPrimary) (not .IsRelation) (not (isFeatureField .Name)) (not (eq (.Name | lower) "email")) (not (eq (.Name | lower) "password")) }}
+            {{- if or .DefaultValue (not .IsNullable) }}
+            {{ .Name | pascalcase }} = {{ template "defaultValueExpression" . }},
+            {{- end }}
+            {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+        };
+
+        OnBeforeRegister(entity);
+        await _repository.AddAsync(entity, cancellationToken);
+        await _repository.SaveChangesAsync(cancellationToken);
+        return entity;
+    }
+
+    public async Task<{{ $auth }}?> GetByIdAsync(object id, CancellationToken cancellationToken = default)
+    {
+        return await _repository.GetByIdAsync(id, cancellationToken);
+    }
+}

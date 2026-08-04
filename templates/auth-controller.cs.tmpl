@@ -5,11 +5,10 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Asp.Versioning;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using {{ .Project.Name | pascalcase }}.Application.Security;
+using {{ .Project.Name | pascalcase }}.Application.Services;
 using {{ .Project.Name | pascalcase }}.Domain.Shared;
-using {{ .Project.Name | pascalcase }}.Infrastructure.Persistence;
 
 namespace {{ .Project.Name | pascalcase }}.WebApi.Controllers;
 
@@ -38,18 +37,13 @@ namespace {{ .Project.Name | pascalcase }}.WebApi.Controllers;
 {{- end }}
 public class {{ $authType }}Controller : ControllerBase
 {
-    private readonly DomainDbContext _context;
+    private readonly IAuthService _authService;
     private readonly IConfiguration _configuration;
-    private readonly IPasswordHasher _passwordHasher;
 
-    public {{ $authType }}Controller(
-        DomainDbContext context,
-        IConfiguration configuration,
-        IPasswordHasher passwordHasher)
+    public {{ $authType }}Controller(IAuthService authService, IConfiguration configuration)
     {
-        _context = context;
+        _authService = authService ?? throw new ArgumentNullException(nameof(authService));
         _configuration = configuration;
-        _passwordHasher = passwordHasher;
     }
 
 {{- if .Project.Auth.Endpoints.HasLogin }}
@@ -57,10 +51,9 @@ public class {{ $authType }}Controller : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
-        var entity = await _context.{{ $authType | pluralize }}
-            .SingleOrDefaultAsync(e => e.Email == request.Email);
+        var entity = await _authService.LoginAsync(request.Email, request.Password);
 
-        if (entity == null || !_passwordHasher.VerifyPassword(entity.Password, request.Password))
+        if (entity == null)
             return Unauthorized(new { message = "Invalid credentials" });
 
         var token = GenerateJwtToken(entity);
@@ -73,34 +66,12 @@ public class {{ $authType }}Controller : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
-        var exists = await _context.{{ $authType | pluralize }}
-            .AnyAsync(e => e.Email == request.Email);
+        var exists = await _authService.EmailExistsAsync(request.Email);
 
         if (exists)
             return Conflict(new { message = "Email already registered" });
 
-        var entity = new {{ $proj }}.Domain.Entities.{{ $authType }}
-        {
-{{- if eq $authPkType "Guid" }}
-            {{ $authPk }} = Guid.NewGuid(),
-{{- end }}
-            Email = request.Email,
-            Password = _passwordHasher.HashPassword(request.Password),
-{{- range .Project.Entities }}
-{{- if eq .Name $authType }}
-{{- range .Fields }}
-            {{- if and (not .IsPrimary) (not .IsRelation) (not (isFeatureField .Name)) (not (eq (.Name | lower) "email")) (not (eq (.Name | lower) "password")) }}
-            {{- if or .DefaultValue (not .IsNullable) }}
-            {{ .Name | pascalcase }} = {{ template "defaultValueExpression" . }},
-            {{- end }}
-            {{- end }}
-{{- end }}
-{{- end }}
-{{- end }}
-        };
-
-        _context.{{ $authType | pluralize }}.Add(entity);
-        await _context.SaveChangesAsync();
+        await _authService.RegisterAsync(request.Email, request.Password);
 
         return Created();
     }
@@ -122,7 +93,7 @@ public class {{ $authType }}Controller : ControllerBase
 {{- else }}
         if (!Guid.TryParse(idClaim, out var {{ $idParam }})) return Unauthorized();
 {{- end }}
-        var entity = await _context.{{ $authType | pluralize }}.FindAsync({{ $idParam }});
+        var entity = await _authService.GetByIdAsync({{ $idParam }});
         if (entity == null)
             return NotFound();
 

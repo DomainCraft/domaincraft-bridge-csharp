@@ -1,0 +1,27 @@
+{{- $proj := .Project.Name | pascalcase }}
+{{- $auth := .Project.Auth.Entity }}
+using {{ $proj }}.Domain.Entities;
+
+namespace {{ $proj }}.Application.Services;
+
+/// <summary>
+/// Authentication port for the {{ $auth }} entity. Implemented by the generated
+/// partial (src/Application/Generated/AuthService.g.cs) and the developer-owned
+/// custom partial (src/Application/Services/AuthService.cs).
+/// Keeps the auth controller free of DbContext — same Generation Gap pattern as
+/// the per-entity I{Entity}Service.
+/// </summary>
+public interface IAuthService
+{
+    /// <summary>Find a {{ $auth | lowercase }} by email and verify the password. Returns null on bad credentials.</summary>
+    Task<{{ $auth }}?> LoginAsync(string email, string password, CancellationToken cancellationToken = default);
+
+    /// <summary>Check whether a {{ $auth | lowercase }} with the given email already exists.</summary>
+    Task<bool> EmailExistsAsync(string email, CancellationToken cancellationToken = default);
+
+    /// <summary>Create a new {{ $auth | lowercase }} with a hashed password (runs the OnBeforeRegister hook).</summary>
+    Task<{{ $auth }}> RegisterAsync(string email, string password, CancellationToken cancellationToken = default);
+
+    /// <summary>Get a {{ $auth | lowercase }} by ID (used by /me).</summary>
+    Task<{{ $auth }}?> GetByIdAsync(object id, CancellationToken cancellationToken = default);
+}

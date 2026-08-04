@@ -20,6 +20,9 @@ public static class DependencyInjection
 {{- range .Project.Entities }}
         services.AddScoped<I{{ .Name }}Service, {{ .Name }}Service>();
 {{- end }}
+{{- if .Project.HasAuth }}
+        services.AddScoped<IAuthService, AuthService>();
+{{- end }}
 
         return services;
     }

@@ -13,6 +13,7 @@ namespace {{ $proj }}.Application.Services;
 // AUTO-GENERATED — DO NOT EDIT. Regenerated on every `domaincraft generate`.
 // Implement the partial hooks in src/Application/Services/{{ .Entity.Name }}Service.cs
 // (overwrite: false) to customize behavior without losing your changes.
+#nullable enable
 public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
 {
     private readonly I{{ .Entity.Name }}Repository _repository;
@@ -55,6 +56,22 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
     partial void OnBeforeUpdate({{ .Entity.Name }} entity);
     partial void OnBeforeDelete({{ .Entity.Name }} entity);
 
+    // After-hooks run immediately after the change is committed (SaveChangesAsync
+    // returned), so the entity has its final persisted state (server-generated Id,
+    // computed `readonly` values, timestamps). Use them for side effects — e.g. send
+    // email/notifications, publish integration events, or notify external systems.
+    // Note: the entity is already persisted; any mutation you make here is NOT
+    // re-saved by the framework.
+    partial void OnAfterCreate({{ .Entity.Name }} entity);
+    partial void OnAfterUpdate({{ .Entity.Name }} entity);
+    partial void OnAfterDelete({{ .Entity.Name }} entity);
+
+    // Snapshot of the last persisted record, set right before OnBeforeUpdate runs.
+    // The incoming entity has already been mutated by the controller (full update or
+    // merge-patch), so your custom hook can compare it against OriginalState to see
+    // exactly which properties changed (e.g. block edits to immutable fields).
+    protected {{ .Entity.Name }}? OriginalState { get; private set; }
+
     public async Task<List<{{ .Entity.Name }}>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         return await _repository.GetAllAsync(cancellationToken);
@@ -90,6 +107,7 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
         OnBeforeCreate(entity);
         await _repository.AddAsync(entity, cancellationToken);
         await _repository.SaveChangesAsync(cancellationToken);
+        OnAfterCreate(entity);
 {{- if .HasCacheable }}
         await _cache.RemoveByPrefixAsync("{{ .Entity.Name }}:by-id:", cancellationToken);
 {{- end }}
@@ -106,9 +124,17 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
         {
             return null;
         }
+        OriginalState = await _repository.GetOriginalAsync(id, cancellationToken);
         OnBeforeUpdate(entity);
         _repository.Update(entity);
+{{- if .HasOptimisticLock }}
+        // Optimistic lock: bump the version token so concurrent writers conflict
+        // instead of silently overwriting each other (last-write-wins). SaveChanges
+        // compares the original version against the row; a stale writer gets 409.
+        entity.Version++;
+{{- end }}
         await _repository.SaveChangesAsync(cancellationToken);
+        OnAfterUpdate(entity);
 {{- if .HasCacheable }}
         await _cache.RemoveByPrefixAsync("{{ .Entity.Name }}:by-id:", cancellationToken);
 {{- end }}
@@ -125,6 +151,7 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
         {
             return null;
         }
+        OriginalState = await _repository.GetOriginalAsync(id, cancellationToken);
         OnBeforeUpdate(entity);
 {{- if .HasCacheable }}
         // Cacheable: GetByIdAsync may have returned a detached cached instance, so it is
@@ -135,7 +162,13 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
         // The caller has already returned this instance from GetByIdAsync, so EF change
         // tracking marks only the modified properties; do not call _repository.Update.
 {{- end }}
+{{- if .HasOptimisticLock }}
+        // Optimistic lock: bump the version token on partial updates as well, so a
+        // concurrent full/patch update is detected via the row's version column.
+        entity.Version++;
+{{- end }}
         await _repository.SaveChangesAsync(cancellationToken);
+        OnAfterUpdate(entity);
 {{- if .HasCacheable }}
         await _cache.RemoveByPrefixAsync("{{ .Entity.Name }}:by-id:", cancellationToken);
 {{- end }}
@@ -157,6 +190,7 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
         _repository.Delete(existing);
 {{- end }}
         await _repository.SaveChangesAsync(cancellationToken);
+        OnAfterDelete(existing);
 {{- if .HasCacheable }}
         await _cache.RemoveByPrefixAsync("{{ .Entity.Name }}:by-id:", cancellationToken);
 {{- end }}

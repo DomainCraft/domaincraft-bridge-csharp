@@ -30,6 +30,8 @@ registry_packages:
   xunit_runner: xunit.runner.visualstudio
   ef_core_inmemory: Microsoft.EntityFrameworkCore.InMemory
   mvc_testing: Microsoft.AspNetCore.Mvc.Testing
+  testcontainers: Testcontainers.PostgreSql
+  npgsql: Npgsql
   hangfire: Hangfire
   hangfire_postgresql: Hangfire.PostgreSql
   versioning: Asp.Versioning.Mvc
@@ -161,6 +163,27 @@ templates:
     source: templates/service-registration.cs.tmpl
     target: "src/Application/DependencyInjection.cs"
 
+  # ===== AUTH SERVICE (Generation Gap: Core + Custom) =====
+  # The auth flow (login/register/me) lives in an IAuthService port so the auth
+  # controller never touches DomainDbContext directly — same pattern as the
+  # per-entity I{Entity}Service. The generated part is overwritten every run;
+  # the custom part (overwrite: false) is scaffolded once for business hooks.
+  - for: project
+    source: templates/iauth-service.cs.tmpl
+    target: "src/Application/Services/IAuthService.cs"
+    when: hasAuth
+
+  - for: project
+    source: templates/generated-auth-service.cs.tmpl
+    target: "src/Application/Generated/AuthService.g.cs"
+    when: hasAuth
+
+  - for: project
+    source: templates/custom-auth-service.cs.tmpl
+    target: "src/Application/Services/AuthService.cs"
+    when: hasAuth
+    overwrite: false
+
   # ===== CACHING =====
   # Redis is intentionally NOT referenced. Caching is either in-process
   # (InMemoryCacheService) or, with the dapr addon, through Dapr state management
@@ -286,6 +309,11 @@ templates:
   - for: project
     source: templates/Program.cs.tmpl
     target: "src/WebApi/Program.cs"
+    # Developer-owned: Program.cs is the single host entry point where you add
+    # custom middleware, policies and pipeline tweaks. Marking it overwrite:false
+    # means a regeneration never clobbers those edits. When you DO want the
+    # generator's Program.cs updates to land, delete the file and regenerate.
+    overwrite: false
 
   - for: project
     source: templates/appsettings.json.tmpl

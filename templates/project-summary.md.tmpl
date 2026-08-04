@@ -27,6 +27,7 @@ Business logic lives in per-entity **partial service classes** split into two fi
 
 - `src/Application/Generated/<Entity>Service.g.cs` — **regenerated on every run**. Contains
   CRUD logic, soft-delete handling, and `partial void OnBeforeCreate/OnBeforeUpdate/OnBeforeDelete`
+  (pre-commit) + `partial void OnAfterCreate/OnAfterUpdate/OnAfterDelete` (post-commit, for side effects)
   hooks.
 - `src/Application/Services/<Entity>Service.cs` — **generated once** (`overwrite: false`) and
   owned by the developer. Implement the partial hooks here to add custom business logic.

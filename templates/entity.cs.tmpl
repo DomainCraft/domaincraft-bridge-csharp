@@ -41,7 +41,8 @@ public class {{ .Entity.Name }}
 {{- end }}
 
 [ForeignKey("{{ $fk }}")]
-    public virtual {{ .RelationTarget }} {{ .NavigationName | pascalcase }} { get; set; } = default!;
+    [JsonIgnore]
+    public virtual {{ .RelationTarget }}{{ if .IsNullable }}?{{ end }} {{ .NavigationName | pascalcase }} { get; set; }{{ if not .IsNullable }} = default!;{{ end }}
 {{- end }}
 {{- else }}
 {{- if .IsHidden }}

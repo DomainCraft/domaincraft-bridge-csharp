@@ -60,6 +60,15 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     {
         _logger.LogInformation("GET /api/{{ pluralize $entity | lowercase }} - page {Page} size {PageSize}", page, pageSize);
         var result = await _service.GetPagedAsync(page, pageSize, sort, search);
+{{- if and $perms $perms.Read (hasOwnershipToken $perms.Read) }}
+        // @Owner read: without an explicit role, only expose records the caller owns.
+{{- $readBypass := list }}
+{{- range $perms.Read }}{{- if not (hasPrefix "@" .) }}{{ $readBypass = append $readBypass . }}{{ end }}{{- end }}
+        if (!_permissionService.HasAnyRole(new[] { {{- range $i, $r := $readBypass }}{{ if $i }}, {{ end }}"{{ $r }}"{{- end }} }))
+        {
+            result.Items = result.Items.Where(e => _permissionService.IsOwner(e)).ToList();
+        }
+{{- end }}
         var dtos = result.Items.Select(MapToDto).ToList();
         return Ok(new PagedResult<{{ $entity }}Dto>
         {
@@ -86,6 +95,13 @@ public class {{ pluralize $entity }}Controller : ControllerBase
             _logger.LogWarning("{{ $entity }} with ID {id} not found", id);
             return NotFound();
         }
+{{- if and $perms $perms.Read (hasOwnershipToken $perms.Read) }}
+        // @Owner read: forbid unless the caller is the owner or holds an explicit role.
+        if ({{ template "ownerCheck" (dict "Roles" $perms.Read "Var" "entity") }})
+        {
+            return Forbid();
+        }
+{{- end }}
         var dto = MapToDto(entity);
         return Ok(dto);
     }
@@ -141,9 +157,12 @@ public class {{ pluralize $entity }}Controller : ControllerBase
         MapUpdateRequestToEntity(request, existingEntity);
 
 {{- if .HasOptimisticLock }}
-        if (request.Version.HasValue)
+        // Optimistic-lock precondition: the client must send the version it last read.
+        // If it doesn't match what is currently stored, another request already updated
+        // the record — reject with 409 (conflict) without touching the data.
+        if (request.Version.HasValue && request.Version.Value != existingEntity.Version)
         {
-            existingEntity.Version = request.Version.Value;
+            return Conflict(new { message = "Concurrency conflict: the resource was modified by another request" });
         }
 {{- end }}
 {{- if .HasAuditLog }}
@@ -273,7 +292,7 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     public class Create{{ $entity }}Request
     {
 {{- range .Entity.Fields }}
-{{- if or (isFeatureField .Name) (eq (lower .Name) "password") }}
+{{- if or (isFeatureField .Name) (eq (lower .Name) "password") (.IsReadonly) }}
 {{- else if not .IsPrimary }}
 {{- template "requestFieldProperties" . }}
 {{- end }}
@@ -283,7 +302,7 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     public class Update{{ $entity }}Request
     {
 {{- range .Entity.Fields }}
-{{- if or (isFeatureField .Name) (eq (lower .Name) "password") }}
+{{- if or (isFeatureField .Name) (eq (lower .Name) "password") (.IsReadonly) }}
 {{- else if not .IsPrimary }}
 {{- template "requestFieldProperties" . }}
 {{- end }}
@@ -328,7 +347,7 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     private void MapCreateRequestToEntity(Create{{ $entity }}Request request, {{ $entity }} entity)
     {
 {{- range .Entity.Fields }}
-{{- if or (isFeatureField .Name) (eq (lower .Name) "password") }}
+{{- if or (isFeatureField .Name) (eq (lower .Name) "password") (.IsReadonly) }}
 {{- else if not .IsPrimary }}
 {{- template "mapRequestToEntity" . }}
 {{- end }}
@@ -338,7 +357,7 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     private void MapUpdateRequestToEntity(Update{{ $entity }}Request request, {{ $entity }} entity)
     {
 {{- range .Entity.Fields }}
-{{- if or (isFeatureField .Name) (eq (lower .Name) "password") }}
+{{- if or (isFeatureField .Name) (eq (lower .Name) "password") (.IsReadonly) }}
 {{- else if not .IsPrimary }}
 {{- template "mapRequestToEntity" . }}
 {{- end }}
@@ -357,7 +376,7 @@ public class {{ pluralize $entity }}Controller : ControllerBase
             throw new ArgumentException("Patch body must be a JSON object", nameof(patch));
         }
 {{- range .Entity.Fields }}
-{{- if or (isFeatureField .Name) (eq (lower .Name) "password") }}
+{{- if or (isFeatureField .Name) (eq (lower .Name) "password") (.IsReadonly) }}
 {{- else if .IsPrimary }}
 {{- else if .IsRelation }}
 {{- else if .IsArray }}
