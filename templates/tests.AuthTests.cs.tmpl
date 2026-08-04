@@ -1,0 +1,84 @@
+{{- $proj := .Project.Name | pascalcase }}
+{{- $authRoute := "" }}
+{{- if .Project.HasAuth }}
+{{- $authRoute = .Project.Auth.Entity | lowercase }}
+{{- end }}
+{{- $registerEnabled := false }}
+{{- $loginEnabled := false }}
+{{- $meEnabled := false }}
+{{- if .Project.HasAuth }}
+{{- $registerEnabled = .Project.Auth.Endpoints.HasRegister }}
+{{- $loginEnabled = .Project.Auth.Endpoints.HasLogin }}
+{{- $meEnabled = .Project.Auth.Endpoints.HasMe }}
+{{- end }}
+using System;
+using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Threading.Tasks;
+using Xunit;
+using {{ $proj }}.Domain.Entities;
+
+namespace {{ $proj }}.Tests;
+
+/// <summary>
+/// Auto-generated authentication-flow tests for the {{ $proj }} API.
+/// Verifies register/login/me behavior and returns expected HTTP status codes.
+/// Shares the <see cref="ApiTests"/> fixture from ApiTests.cs.
+/// </summary>
+public partial class ApiTests
+{
+{{- if .Project.HasAuth }}
+
+    // ===== Auth flow =====
+
+    [Fact]
+    public async Task Auth_UnauthenticatedMe_ReturnsUnauthorized()
+    {
+        var response = await _client.GetAsync("/api/{{ $authRoute }}/me");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+{{- if and $registerEnabled $loginEnabled $meEnabled }}
+    [Fact]
+    public async Task Auth_RegisterLoginMe_ReturnsOk()
+    {
+        var email = $"test_{Guid.NewGuid():N}@example.com";
+        var registerResponse = await _client.PostAsJsonAsync("/api/{{ $authRoute }}/register", new { email, password = "Password123!" });
+        Assert.Equal(HttpStatusCode.Created, registerResponse.StatusCode);
+
+        var loginResponse = await _client.PostAsJsonAsync("/api/{{ $authRoute }}/login", new { email, password = "Password123!" });
+        Assert.Equal(HttpStatusCode.OK, loginResponse.StatusCode);
+        var loginContent = await loginResponse.Content.ReadFromJsonAsync<JsonElement>(_jsonOptions);
+        var token = loginContent.GetProperty("token").GetString();
+
+        using var meRequest = new HttpRequestMessage(HttpMethod.Get, "/api/{{ $authRoute }}/me");
+        meRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        var meResponse = await _client.SendAsync(meRequest);
+        Assert.Equal(HttpStatusCode.OK, meResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task Auth_LoginWrongPassword_ReturnsUnauthorized()
+    {
+        var email = $"test_{Guid.NewGuid():N}@example.com";
+        await _client.PostAsJsonAsync("/api/{{ $authRoute }}/register", new { email, password = "Password123!" });
+        var loginResponse = await _client.PostAsJsonAsync("/api/{{ $authRoute }}/login", new { email, password = "wrong-password" });
+        Assert.Equal(HttpStatusCode.Unauthorized, loginResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task Auth_RegisterDuplicateEmail_ReturnsConflict()
+    {
+        var email = $"test_{Guid.NewGuid():N}@example.com";
+        var first = await _client.PostAsJsonAsync("/api/{{ $authRoute }}/register", new { email, password = "Password123!" });
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+
+        var second = await _client.PostAsJsonAsync("/api/{{ $authRoute }}/register", new { email, password = "Password123!" });
+        Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
+    }
+{{- end }}
+{{- end }}
+}

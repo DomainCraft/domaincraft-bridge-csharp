@@ -345,9 +345,26 @@ templates:
     target: "{{ .Project.Name | pascalcase }}.sln"
 
   # ===== TESTS =====
+  # Integration test suite is split by concern across several partial-class files:
+  # ApiTests.cs  - fixture, container, seeding, health check
+  # AuthTests.cs - auth flow (register/login/me/duplicate)
+  # EntityTests.cs - per-entity CRUD authorization matrix
+  # EntityStateTests.cs - role-based 403, 400 invalid body, authenticated CRUD, concurrency
   - for: project
-    source: templates/tests.cs.tmpl
+    source: templates/tests.ApiTests.cs.tmpl
     target: "tests/ApiTests.cs"
+
+  - for: project
+    source: templates/tests.AuthTests.cs.tmpl
+    target: "tests/AuthTests.cs"
+
+  - for: project
+    source: templates/tests.EntityTests.cs.tmpl
+    target: "tests/EntityTests.cs"
+
+  - for: project
+    source: templates/tests.EntityStateTests.cs.tmpl
+    target: "tests/EntityStateTests.cs"
 
   - for: project
     source: templates/tests.csproj.tmpl

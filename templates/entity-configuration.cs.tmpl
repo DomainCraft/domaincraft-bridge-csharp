@@ -105,7 +105,7 @@ public class {{ .Entity.Name }}Configuration : IEntityTypeConfiguration<{{ .Enti
         // FK {{ .PairFieldName }}Id lives on {{ .TargetEntity.Name }}.
         builder
             .HasMany(e => e.{{ .FieldName | pascalcase }})
-            .WithOne(e => e.{{ .PairFieldName | pascalcase }})
+            .WithOne(e => e.{{ .PairNavigationName | pascalcase }})
             .HasForeignKey(e => e.{{ fkName .PairFieldName | pascalcase }})
             .OnDelete(DeleteBehavior.{{ deleteBehaviorName .OnDeleteBehavior }})
             .IsRequired({{ if .IsNullable }}false{{ else }}true{{ end }});

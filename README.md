@@ -14,7 +14,10 @@ Generated/
 │   ├── Infrastructure/   # EF Core, repositories, seeders, caching (Dapr / in-memory)
 │   └── WebApi/           # Controllers, auth, health checks, Docker
 ├── tests/
-│   └── ApiTests.cs       # Integration tests: WebApplicationFactory + Testcontainers (real PostgreSQL)
+│   ├── ApiTests.cs         # Fixture: WebApplicationFactory + Testcontainers (real PostgreSQL), seeding, health check
+│   ├── AuthTests.cs        # Auth flow tests (register/login/me/duplicate)
+│   ├── EntityTests.cs      # Per-entity CRUD authorization matrix
+│   └── EntityStateTests.cs # Role-based 403, 400 invalid body, authenticated CRUD, optimistic-lock concurrency
 ├── EcommercePlatform.sln
 ├── Dockerfile
 └── docker-compose.yml
@@ -120,8 +123,8 @@ never in `src/Application/Generated/`.
 | **Docker** | Done | Multi-stage `Dockerfile` + `docker-compose.yml` with PostgreSQL, API |
 | **Swagger/OpenAPI** | Done | Enabled in development mode |
 | **CORS** | Done | Configurable policy |
-| **Integration Tests** | Done | xUnit + `WebApplicationFactory` + Testcontainers PostgreSQL (real FK/cascade/SQL) |
-| **Test Data Generation** | Done | Smart defaults: email fields → valid email, enum fields → default value |
+| **Integration Tests** | Done | xUnit + `WebApplicationFactory` + Testcontainers PostgreSQL (real FK/cascade/SQL); asserts the full status-code contract — 200/201/204, 400 (model validation), 401, 403 (role-based), 404, 409 (duplicate unique + optimistic-lock concurrency) |
+| **Test Data Generation** | Done | Smart defaults: email fields → valid email, enum fields → default value; seeds via direct `DbContext` inserts (bypasses permissions) + `IPasswordHasher`-seeded admin for authenticated/role-based tests |
 
 ## Dapr Addon (`--addons dapr`)
 
@@ -320,7 +323,10 @@ Permissions map directly from `domain.yaml` to ASP.NET Core authorization:
 | `Program.cs.tmpl` | Application entry point |
 | `Dockerfile.tmpl` | Multi-stage Docker build |
 | `docker-compose.yml.tmpl` | Docker Compose with PostgreSQL + API |
-| `tests.cs.tmpl` | Integration tests |
+| `tests.ApiTests.cs.tmpl` | Integration-test fixture, container, seeding, health check (partial `ApiTests`) |
+| `tests.AuthTests.cs.tmpl` | Auth flow tests: register/login/me/duplicate (partial `ApiTests`) |
+| `tests.EntityTests.cs.tmpl` | Per-entity CRUD authorization matrix (partial `ApiTests`) |
+| `tests.EntityStateTests.cs.tmpl` | Role-based 403, 400 invalid body, authenticated CRUD, optimistic-lock concurrency (partial `ApiTests`) |
 | `appsettings.json.tmpl` | Configuration |
 
 ## Planned Features

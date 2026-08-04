@@ -249,3 +249,149 @@ Enum.Parse<{{ $csType }}>({{ $value | pascalcase | jsonValue }})
 {{- end }}
 {{- end }}
 {{- end -}}
+
+{{/* ===== Test helpers: shared by the split tests/*.cs.tmpl templates ===== */}}
+
+{{- /* testFieldValue emits a single C# object-initializer line for one field.
+     Context: IRField. Relations map onto the FK-named entity property. */ -}}
+{{- define "testFieldValue" }}
+{{- if .IsRelation }}
+{{- if .IsNullable }}
+            {{ fkName .Name | pascalcase }} = _createdIds.TryGetValue("{{ .RelationTarget }}", out var {{ fkName .Name | camelcase }}Pk) ? ({{ languageType .DatabaseType true }})({{ fkName .Name | camelcase }}Pk) : null,
+{{- else }}
+            {{ fkName .Name | pascalcase }} = _createdIds.TryGetValue("{{ .RelationTarget }}", out var {{ fkName .Name | camelcase }}Pk) ? ({{ languageType .DatabaseType false }})({{ fkName .Name | camelcase }}Pk) : default,
+{{- end }}
+{{- else if eq .DatabaseType "uuid" }}
+            {{ .Name | pascalcase }} = Guid.NewGuid(),
+{{- else if or (eq .DatabaseType "string") (eq .DatabaseType "text") }}
+{{- if .HasValidation "email" }}
+            {{ .Name | pascalcase }} = "test@example.com",
+{{- else if .HasValidation "url" }}
+            {{ .Name | pascalcase }} = "https://example.com",
+{{- else if .DefaultValue }}
+            {{ .Name | pascalcase }} = "{{ .DefaultValue }}",
+{{- else }}
+            {{ .Name | pascalcase }} = "test_{{ .Name | lowercase }}",
+{{- end }}
+{{- else if eq .DatabaseType "int" }}
+            {{ .Name | pascalcase }} = 1,
+{{- else if eq .DatabaseType "bigint" }}
+            {{ .Name | pascalcase }} = 1L,
+{{- else if eq .DatabaseType "float" }}
+            {{ .Name | pascalcase }} = 1.0,
+{{- else if eq .DatabaseType "boolean" }}
+            {{ .Name | pascalcase }} = true,
+{{- else if eq .DatabaseType "decimal" }}
+            {{ .Name | pascalcase }} = 1.0m,
+{{- else if or (eq .DatabaseType "datetime") (eq .DatabaseType "date") }}
+            {{ .Name | pascalcase }} = DateTime.UtcNow,
+{{- else if hasPrefix "array(" .DatabaseType }}
+{{- $inner := enumTypeName .DatabaseType }}
+{{- if isEnumType $inner }}
+            {{ .Name | pascalcase }} = new List<{{ $inner }}>(),
+{{- else if eq $inner "string" }}
+{{- if .HasValidation "email" }}
+            {{ .Name | pascalcase }} = new List<string> { "test@example.com" },
+{{- else if .HasValidation "url" }}
+            {{ .Name | pascalcase }} = new List<string> { "https://example.com" },
+{{- else }}
+            {{ .Name | pascalcase }} = new List<string> { "test_{{ .Name | lowercase }}" },
+{{- end }}
+{{- else if eq $inner "uuid" }}
+            {{ .Name | pascalcase }} = new List<Guid> { Guid.NewGuid() },
+{{- else if eq $inner "int" }}
+            {{ .Name | pascalcase }} = new List<int> { 1 },
+{{- else if eq $inner "bigint" }}
+            {{ .Name | pascalcase }} = new List<long> { 1L },
+{{- else if eq $inner "float" }}
+            {{ .Name | pascalcase }} = new List<double> { 1.0 },
+{{- else if eq $inner "decimal" }}
+            {{ .Name | pascalcase }} = new List<decimal> { 1.0m },
+{{- else if or (eq $inner "datetime") (eq $inner "date") }}
+            {{ .Name | pascalcase }} = new List<DateTime> { DateTime.UtcNow },
+{{- else if eq $inner "boolean" }}
+            {{ .Name | pascalcase }} = new List<bool> { true },
+{{- end }}
+{{- else if isEnumType .DatabaseType }}
+{{- if .DefaultValue }}
+            {{ .Name | pascalcase }} = {{ enumTypeName .DatabaseType }}.{{ .DefaultValue | pascalcase }},
+{{- else }}
+            {{ .Name | pascalcase }} = ({{ enumTypeName .DatabaseType }})0,
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- /* testAuthEntityFields emits object-initializer lines for the auth entity's
+     required scalar fields, skipping identity/relations/feature fields and the
+     email/password/role fields (set explicitly by CreateDbUserAsync). Used so a
+     Db-context-direct user insert satisfies every NOT NULL column the auth entity
+     declares. Context: the auth IREntity. */ -}}
+{{- define "testAuthEntityFields" }}
+{{- range .Fields }}
+{{- $n := .Name | lower }}
+{{- if and (not .IsPrimary) (not .IsMany) (not .IsRelation) (not (isFeatureField .Name)) (ne $n "email") (ne $n "password") (ne $n "role") }}
+{{- template "testFieldValue" . }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- /* testConcurrencyBody emits the HTTP create/update body for the optimistic-lock
+     concurrency test. All required (non-nullable, non-readonly) fields are included:
+     relations to the auth entity point at a freshly created owner (so the row doesn't
+     collide with the seeded row that already owns one), all other relations map via
+     _createdIds (JSON relation name) and scalars via testFieldValue. Optional fields
+     are omitted. Context: dict with "Entity", "AuthName" and "AuthPk". */ -}}
+{{- define "testConcurrencyBody" }}
+{{- $e := .Entity }}
+{{- $authName := .AuthName }}
+{{- $authPk := .AuthPk }}
+{{- range $e.Fields }}
+{{- if and (not .IsPrimary) (not .IsMany) (not (isFeatureField .Name)) (not .IsNullable) (not .IsReadonly) }}
+{{- if .IsRelation }}
+{{- if eq .RelationTarget $authName }}
+            {{ .Name | pascalcase }} = ownerUser.{{ $authPk }},
+{{- else }}
+            {{ .Name | pascalcase }} = _createdIds.TryGetValue("{{ .RelationTarget }}", out var {{ .Name | camelcase }}Ck) ? ({{ languageType .DatabaseType false }})({{ .Name | camelcase }}Ck) : default,
+{{- end }}
+{{- else }}
+{{- template "testFieldValue" . }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- /* testRequestBody builds a CLR entity object-initializer (relations → FK entity
+     property). Context: IRField. */ -}}
+{{- define "testRequestBody" }}
+{{- range .Fields }}
+{{- if and (not .IsPrimary) (not .IsMany) }}
+{{- if not (isFeatureField .Name) }}
+{{- template "testFieldValue" . }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- /* testHttpRequestBody builds an HTTP request object-initializer (relations → JSON
+     name camelCase, matching controller DTO [JsonPropertyName]). Context: dict with
+     "Entity" and optional "Suffix" (used to avoid duplicate out-vars on second use in
+     the same method's scope). */ -}}
+{{- define "testHttpRequestBody" }}
+{{- $entity := .Entity }}
+{{- $suffix := .Suffix }}
+{{- range $entity.Fields }}
+{{- if and (not .IsPrimary) (not .IsMany) }}
+{{- if not (isFeatureField .Name) }}
+{{- if .IsRelation }}
+{{- if .IsNullable }}
+            {{ .Name | pascalcase }} = _createdIds.TryGetValue("{{ .RelationTarget }}", out var {{ .Name | camelcase }}{{ $suffix }}Pk) ? ({{ languageType .DatabaseType true }})({{ .Name | camelcase }}{{ $suffix }}Pk) : null,
+{{- else }}
+            {{ .Name | pascalcase }} = _createdIds.TryGetValue("{{ .RelationTarget }}", out var {{ .Name | camelcase }}{{ $suffix }}Pk) ? ({{ languageType .DatabaseType false }})({{ .Name | camelcase }}{{ $suffix }}Pk) : default,
+{{- end }}
+{{- else }}
+{{- template "testFieldValue" . }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
