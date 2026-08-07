@@ -1,5 +1,7 @@
 {{- $proj := .Project.Name | pascalcase }}
+using {{ $proj }}.Application.Services;
 using {{ $proj }}.Domain.Entities;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace {{ $proj }}.Application.Services;
 
@@ -8,38 +10,79 @@ namespace {{ $proj }}.Application.Services;
 /// Generated once (overwrite: false) — DomainCraft never overwrites this file,
 /// so you can safely add custom business logic here.
 /// </summary>
+/// <remarks>
+/// All hooks are overridable members on the generated partial
+/// (src/Application/Generated/{{ .Entity.Name }}Service.g.cs). Override them here
+/// to add business logic without touching generated code.
+///
+/// • Before hooks  — validate / mutate, return HookResult.Fail("reason") to abort
+///   (mapped to HTTP 400; no exception needed). The base implementation forwards
+///   to the legacy sync `partial void OnBefore*` hooks, so existing code keeps
+///   compiling unchanged.
+/// • Override hooks — return HookResult.Handled() to fully replace the generated
+///   flow (e.g. send to a queue instead of the DB) or HookResult.Fail("reason")
+///   to abort.
+/// • After hooks   — run after the change is committed; perfect for side effects
+///   (email, integration events, notifications).
+///
+/// Resolve any registered service inside a hook with Services.GetRequiredService<T>().
+/// </remarks>
 public partial class {{ .Entity.Name }}Service
 {
-    // Runs before a new {{ .Entity.Name }} is saved.
-    // partial void OnBeforeCreate({{ .Entity.Name }} entity)
+    // Runs before a new {{ .Entity.Name }} is saved. Return Fail("reason") to abort.
+    // protected override async Task<HookResult> OnBeforeCreateAsync({{ .Entity.Name }} entity, CancellationToken ct)
     // {
-    //     entity.CreatedAt = DateTime.UtcNow;
+    //     var isValid = await Services.GetRequiredService<IExternalApi>().CheckAsync(entity.Sku, ct);
+    //     if (!isValid)
+    //     {
+    //         return HookResult.Fail("Invalid SKU");
+    //     }
+    //     return HookResult.Success();
     // }
 
-    // Runs before an existing {{ .Entity.Name }} is saved.
-    // partial void OnBeforeUpdate({{ .Entity.Name }} entity)
+    // Runs before an existing {{ .Entity.Name }} is saved. Compare against
+    // OriginalState to see which properties changed; return Fail("reason") to abort.
+    // protected override async Task<HookResult> OnBeforeUpdateAsync({{ .Entity.Name }} entity, CancellationToken ct)
     // {
+    //     return HookResult.Success();
     // }
 
-    // Runs before a {{ .Entity.Name }} is deleted (or soft-deleted).
-    // partial void OnBeforeDelete({{ .Entity.Name }} entity)
+    // Runs before a {{ .Entity.Name }} is deleted (or soft-deleted). Return Fail("reason") to abort.
+    // protected override async Task<HookResult> OnBeforeDeleteAsync({{ .Entity.Name }} entity, CancellationToken ct)
     // {
+    //     return HookResult.Success();
+    // }
+
+    // Full replacement of Create — return HookResult.Handled() to skip the EF Core
+    // path entirely (e.g. write to a queue) while still running OnAfterCreateAsync.
+    // protected override async Task<HookResult> OnCreateOverrideAsync({{ .Entity.Name }} entity, CancellationToken ct)
+    // {
+    //     return HookResult.Success();
     // }
 
     // Runs after a new {{ .Entity.Name }} is committed. The entity already has its
     // server-generated values (Id, computed `readonly` fields, timestamps).
     // Use for side effects: send email, publish integration events, notify.
-    // partial void OnAfterCreate({{ .Entity.Name }} entity)
+    // protected override async Task OnAfterCreateAsync({{ .Entity.Name }} entity, CancellationToken ct)
     // {
+    //     await Services.GetRequiredService<IEmailService>().SendAsync(entity.Email, "Welcome", ct);
     // }
 
     // Runs after an existing {{ .Entity.Name }} is committed.
-    // partial void OnAfterUpdate({{ .Entity.Name }} entity)
+    // protected override async Task OnAfterUpdateAsync({{ .Entity.Name }} entity, CancellationToken ct)
     // {
     // }
 
     // Runs after a {{ .Entity.Name }} is deleted (or soft-deleted).
-    // partial void OnAfterDelete({{ .Entity.Name }} entity)
+    // protected override async Task OnAfterDeleteAsync({{ .Entity.Name }} entity, CancellationToken ct)
     // {
+    // }
+
+    // Legacy sync partial hooks are still supported — they run from the base
+    // implementation of the async before/after hooks above. New code should prefer
+    // the async overrides so it can await and return a result:
+    // partial void OnBeforeCreate({{ .Entity.Name }} entity)
+    // {
+    //     entity.CreatedAt = DateTime.UtcNow;
     // }
 }

@@ -146,6 +146,10 @@ templates:
   # overwritten, the custom part (overwrite: false) is scaffolded once and owned by
   # the developer. Implement the partial hooks there to keep custom business logic
   # safe across regenerations.
+  - for: project
+    source: templates/service-hooks.cs.tmpl
+    target: "src/Application/Services/ServiceHooks.cs"
+
   - for: entity
     source: templates/iservice.cs.tmpl
     target: "src/Application/Services/I{{ .Entity.Name }}Service.cs"

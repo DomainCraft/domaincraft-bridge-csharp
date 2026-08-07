@@ -14,26 +14,43 @@ using {{ $proj }}.Application.Security;
 using {{ $proj }}.Application.Services;
 using {{ $proj }}.Domain.Entities;
 using {{ $proj }}.Domain.Shared;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace {{ $proj }}.Application.Services;
 
 // AUTO-GENERATED — DO NOT EDIT. Regenerated on every `domaincraft generate`.
-// Implement the partial hooks in src/Application/Services/AuthService.cs
+// Implement the hooks in src/Application/Services/AuthService.cs
 // (overwrite: false) to customize behavior without losing your changes.
 #nullable enable
 public partial class AuthService : IAuthService
 {
     private readonly I{{ $auth }}Repository _repository;
     private readonly IPasswordHasher _passwordHasher;
+    private readonly IServiceProvider _services;
 
-    public AuthService(I{{ $auth }}Repository repository, IPasswordHasher passwordHasher)
+    public AuthService(I{{ $auth }}Repository repository, IPasswordHasher passwordHasher, IServiceProvider services)
     {
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         _passwordHasher = passwordHasher ?? throw new ArgumentNullException(nameof(passwordHasher));
+        _services = services ?? throw new ArgumentNullException(nameof(services));
     }
 
-    // Business hook — implement in the custom partial
-    // (src/Application/Services/AuthService.cs).
+    /// <summary>
+    /// Resolves any registered service from inside a hook (see the custom partial).
+    /// </summary>
+    protected IServiceProvider Services => _services;
+
+    // Business hook — override in the custom partial
+    // (src/Application/Services/AuthService.cs). Return HookResult.Fail("reason")
+    // to reject a registration (mapped to HTTP 400). The base implementation
+    // forwards to the legacy sync `partial void OnBeforeRegister` hook.
+    protected virtual async Task<HookResult> OnBeforeRegisterAsync({{ $auth }} entity, CancellationToken ct)
+    {
+        OnBeforeRegister(entity);
+        return HookResult.Success();
+    }
+
+    // Legacy sync partial hook — still supported.
     partial void OnBeforeRegister({{ $auth }} entity);
 
     public async Task<{{ $auth }}?> LoginAsync(string email, string password, CancellationToken cancellationToken = default)
@@ -74,7 +91,11 @@ public partial class AuthService : IAuthService
 {{- end }}
         };
 
-        OnBeforeRegister(entity);
+        var hookResult = await OnBeforeRegisterAsync(entity, cancellationToken);
+        if (hookResult.IsSuccess is false)
+        {
+            throw new HookException(hookResult.Error ?? "Registration was rejected.");
+        }
         await _repository.AddAsync(entity, cancellationToken);
         await _repository.SaveChangesAsync(cancellationToken);
         return entity;

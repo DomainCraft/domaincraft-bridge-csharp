@@ -7,16 +7,18 @@ using {{ $proj }}.Application.Repositories;
 using {{ $proj }}.Application.Services;
 using {{ $proj }}.Domain.Entities;
 using {{ $proj }}.Domain.Shared;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace {{ $proj }}.Application.Services;
 
 // AUTO-GENERATED — DO NOT EDIT. Regenerated on every `domaincraft generate`.
-// Implement the partial hooks in src/Application/Services/{{ .Entity.Name }}Service.cs
+// Implement the hooks in src/Application/Services/{{ .Entity.Name }}Service.cs
 // (overwrite: false) to customize behavior without losing your changes.
 #nullable enable
 public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
 {
     private readonly I{{ .Entity.Name }}Repository _repository;
+    private readonly IServiceProvider _services;
 {{- if .HasEventSourced }}
     private readonly IEventPublisher _eventPublisher;
 {{- end }}
@@ -25,52 +27,128 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
 
 {{- end }}
 {{- if and .HasEventSourced .HasCacheable }}
-    public {{ .Entity.Name }}Service(I{{ .Entity.Name }}Repository repository, IEventPublisher eventPublisher, ICacheService cache)
+    public {{ .Entity.Name }}Service(I{{ .Entity.Name }}Repository repository, IServiceProvider services, IEventPublisher eventPublisher, ICacheService cache)
     {
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
+        _services = services ?? throw new ArgumentNullException(nameof(services));
         _eventPublisher = eventPublisher ?? throw new ArgumentNullException(nameof(eventPublisher));
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
     }
 {{- else if .HasEventSourced }}
-    public {{ .Entity.Name }}Service(I{{ .Entity.Name }}Repository repository, IEventPublisher eventPublisher)
+    public {{ .Entity.Name }}Service(I{{ .Entity.Name }}Repository repository, IServiceProvider services, IEventPublisher eventPublisher)
     {
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
+        _services = services ?? throw new ArgumentNullException(nameof(services));
         _eventPublisher = eventPublisher ?? throw new ArgumentNullException(nameof(eventPublisher));
     }
 {{- else if .HasCacheable }}
-    public {{ .Entity.Name }}Service(I{{ .Entity.Name }}Repository repository, ICacheService cache)
+    public {{ .Entity.Name }}Service(I{{ .Entity.Name }}Repository repository, IServiceProvider services, ICacheService cache)
     {
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
+        _services = services ?? throw new ArgumentNullException(nameof(services));
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
     }
 {{- else }}
-    public {{ .Entity.Name }}Service(I{{ .Entity.Name }}Repository repository)
+    public {{ .Entity.Name }}Service(I{{ .Entity.Name }}Repository repository, IServiceProvider services)
     {
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
+        _services = services ?? throw new ArgumentNullException(nameof(services));
     }
 {{- end }}
 
-    // Business hooks — implement these in the custom partial
+    /// <summary>
+    /// Resolves any registered service from inside a hook, so your custom partial
+    /// can inject collaborations without touching the generated constructor (the
+    /// generated part owns it). Example:
+    ///     var api = Services.GetRequiredService<IExternalApi>();
+    /// </summary>
+    protected IServiceProvider Services => _services;
+
+    // ========================================================================
+    // Business hooks — implement in the custom partial
     // (src/Application/Services/{{ .Entity.Name }}Service.cs).
+    // ------------------------------------------------------------------------
+    // • Async override hooks (On*OverrideAsync) let you REPLACE the whole
+    //   generated flow: return HookResult.Handled() to skip the EF Core path
+    //   (e.g. route to a queue instead of the DB) and run the after-hook, or
+    //   HookResult.Fail("reason") to abort (mapped to HTTP 400).
+    // • Async before hooks (OnBefore*Async) validate / mutate the entity. Return
+    //   HookResult.Fail("reason") to abort cleanly — no exception required.
+    //   Their default implementation forwards to the legacy `partial void
+    //   OnBefore*` hooks, so existing custom partials keep working unchanged.
+    // • Async after hooks (OnAfter*Async) run after the change is committed
+    //   (SaveChangesAsync returned): the entity has its final persisted state
+    //   (server-generated Id, computed readonly values, timestamps). Use them
+    //   for side effects (email, integration events). Mutations are NOT re-saved.
+    // ========================================================================
+
+    // Full-flow override hooks (return Handled() to take over persistence).
+    protected virtual Task<HookResult> OnCreateOverrideAsync({{ .Entity.Name }} entity, CancellationToken ct) => Task.FromResult(HookResult.Success());
+    protected virtual Task<HookResult> OnUpdateOverrideAsync(object id, {{ .Entity.Name }} entity, CancellationToken ct) => Task.FromResult(HookResult.Success());
+    protected virtual Task<HookResult> OnUpdatePartialOverrideAsync(object id, {{ .Entity.Name }} entity, CancellationToken ct) => Task.FromResult(HookResult.Success());
+    protected virtual Task<HookResult> OnDeleteOverrideAsync(object id, {{ .Entity.Name }} entity, CancellationToken ct) => Task.FromResult(HookResult.Success());
+
+    // Async before hooks.
+    protected virtual Task<HookResult> OnBeforeCreateAsync({{ .Entity.Name }} entity, CancellationToken ct)
+    {
+        OnBeforeCreate(entity);
+        return Task.FromResult(HookResult.Success());
+    }
+
+    protected virtual Task<HookResult> OnBeforeUpdateAsync({{ .Entity.Name }} entity, CancellationToken ct)
+    {
+        OnBeforeUpdate(entity);
+        return Task.FromResult(HookResult.Success());
+    }
+
+    protected virtual Task<HookResult> OnBeforeDeleteAsync({{ .Entity.Name }} entity, CancellationToken ct)
+    {
+        OnBeforeDelete(entity);
+        return Task.FromResult(HookResult.Success());
+    }
+
+    // Async after hooks (side effects after commit).
+    protected virtual Task OnAfterCreateAsync({{ .Entity.Name }} entity, CancellationToken ct)
+    {
+        OnAfterCreate(entity);
+        return Task.CompletedTask;
+    }
+
+    protected virtual Task OnAfterUpdateAsync({{ .Entity.Name }} entity, CancellationToken ct)
+    {
+        OnAfterUpdate(entity);
+        return Task.CompletedTask;
+    }
+
+    protected virtual Task OnAfterDeleteAsync({{ .Entity.Name }} entity, CancellationToken ct)
+    {
+        OnAfterDelete(entity);
+        return Task.CompletedTask;
+    }
+
+    // Legacy sync partial hooks — still supported. The default async hooks above
+    // forward to them, and a custom partial may implement them as before.
     partial void OnBeforeCreate({{ .Entity.Name }} entity);
     partial void OnBeforeUpdate({{ .Entity.Name }} entity);
     partial void OnBeforeDelete({{ .Entity.Name }} entity);
-
-    // After-hooks run immediately after the change is committed (SaveChangesAsync
-    // returned), so the entity has its final persisted state (server-generated Id,
-    // computed `readonly` values, timestamps). Use them for side effects — e.g. send
-    // email/notifications, publish integration events, or notify external systems.
-    // Note: the entity is already persisted; any mutation you make here is NOT
-    // re-saved by the framework.
     partial void OnAfterCreate({{ .Entity.Name }} entity);
     partial void OnAfterUpdate({{ .Entity.Name }} entity);
     partial void OnAfterDelete({{ .Entity.Name }} entity);
 
-    // Snapshot of the last persisted record, set right before OnBeforeUpdate runs.
-    // The incoming entity has already been mutated by the controller (full update or
-    // merge-patch), so your custom hook can compare it against OriginalState to see
-    // exactly which properties changed (e.g. block edits to immutable fields).
+    // Snapshot of the last persisted record, set right before OnBeforeUpdateAsync
+    // runs. The incoming entity has already been mutated by the controller (full
+    // update or merge-patch), so your custom hook can compare it against
+    // OriginalState to see exactly which properties changed (e.g. block edits to
+    // immutable fields).
     protected {{ .Entity.Name }}? OriginalState { get; private set; }
+
+    private static void EnsureSuccess(HookResult result)
+    {
+        if (result.IsSuccess is false)
+        {
+            throw new HookException(result.Error ?? "The operation was rejected by business rules.");
+        }
+    }
 
     public async Task<List<{{ .Entity.Name }}>> GetAllAsync(CancellationToken cancellationToken = default)
     {
@@ -104,15 +182,25 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
 
     public async Task<{{ .Entity.Name }}> CreateAsync({{ .Entity.Name }} entity, CancellationToken cancellationToken = default)
     {
-        OnBeforeCreate(entity);
-        await _repository.AddAsync(entity, cancellationToken);
-        await _repository.SaveChangesAsync(cancellationToken);
-        OnAfterCreate(entity);
+        var overrideResult = await OnCreateOverrideAsync(entity, cancellationToken);
+        EnsureSuccess(overrideResult);
+
+        if (!overrideResult.IsHandled)
+        {
+            EnsureSuccess(await OnBeforeCreateAsync(entity, cancellationToken));
+            await _repository.AddAsync(entity, cancellationToken);
+            await _repository.SaveChangesAsync(cancellationToken);
+        }
+
+        await OnAfterCreateAsync(entity, cancellationToken);
 {{- if .HasCacheable }}
         await _cache.RemoveByPrefixAsync("{{ .Entity.Name }}:by-id:", cancellationToken);
 {{- end }}
 {{- if .HasEventSourced }}
-        await _eventPublisher.PublishAsync("{{ .Entity.Name }}Created", entity, cancellationToken);
+        if (!overrideResult.IsHandled)
+        {
+            await _eventPublisher.PublishAsync("{{ .Entity.Name }}Created", entity, cancellationToken);
+        }
 {{- end }}
         return entity;
     }
@@ -124,22 +212,33 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
         {
             return null;
         }
-        OriginalState = await _repository.GetOriginalAsync(id, cancellationToken);
-        OnBeforeUpdate(entity);
-        _repository.Update(entity);
+
+        var overrideResult = await OnUpdateOverrideAsync(id, entity, cancellationToken);
+        EnsureSuccess(overrideResult);
+
+        if (!overrideResult.IsHandled)
+        {
+            OriginalState = await _repository.GetOriginalAsync(id, cancellationToken);
+            EnsureSuccess(await OnBeforeUpdateAsync(entity, cancellationToken));
+            _repository.Update(entity);
 {{- if .HasOptimisticLock }}
-        // Optimistic lock: bump the version token so concurrent writers conflict
-        // instead of silently overwriting each other (last-write-wins). SaveChanges
-        // compares the original version against the row; a stale writer gets 409.
-        entity.Version++;
+            // Optimistic lock: bump the version token so concurrent writers conflict
+            // instead of silently overwriting each other (last-write-wins). SaveChanges
+            // compares the original version against the row; a stale writer gets 409.
+            entity.Version++;
 {{- end }}
-        await _repository.SaveChangesAsync(cancellationToken);
-        OnAfterUpdate(entity);
+            await _repository.SaveChangesAsync(cancellationToken);
+        }
+
+        await OnAfterUpdateAsync(entity, cancellationToken);
 {{- if .HasCacheable }}
         await _cache.RemoveByPrefixAsync("{{ .Entity.Name }}:by-id:", cancellationToken);
 {{- end }}
 {{- if .HasEventSourced }}
-        await _eventPublisher.PublishAsync("{{ .Entity.Name }}Updated", entity, cancellationToken);
+        if (!overrideResult.IsHandled)
+        {
+            await _eventPublisher.PublishAsync("{{ .Entity.Name }}Updated", entity, cancellationToken);
+        }
 {{- end }}
         return entity;
     }
@@ -151,24 +250,32 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
         {
             return null;
         }
-        OriginalState = await _repository.GetOriginalAsync(id, cancellationToken);
-        OnBeforeUpdate(entity);
+
+        var overrideResult = await OnUpdatePartialOverrideAsync(id, entity, cancellationToken);
+        EnsureSuccess(overrideResult);
+
+        if (!overrideResult.IsHandled)
+        {
+            OriginalState = await _repository.GetOriginalAsync(id, cancellationToken);
+            EnsureSuccess(await OnBeforeUpdateAsync(entity, cancellationToken));
 {{- if .HasCacheable }}
-        // Cacheable: GetByIdAsync may have returned a detached cached instance, so it is
-        // not change-tracked here. Attach it explicitly with the patched values applied;
-        // the cached copy holds the pre-patch values for untouched properties.
-        _repository.Update(entity);
+            // Cacheable: GetByIdAsync may have returned a detached cached instance, so it is
+            // not change-tracked here. Attach it explicitly with the patched values applied;
+            // the cached copy holds the pre-patch values for untouched properties.
+            _repository.Update(entity);
 {{- else }}
-        // The caller has already returned this instance from GetByIdAsync, so EF change
-        // tracking marks only the modified properties; do not call _repository.Update.
+            // The caller has already returned this instance from GetByIdAsync, so EF change
+            // tracking marks only the modified properties; do not call _repository.Update.
 {{- end }}
 {{- if .HasOptimisticLock }}
-        // Optimistic lock: bump the version token on partial updates as well, so a
-        // concurrent full/patch update is detected via the row's version column.
-        entity.Version++;
+            // Optimistic lock: bump the version token on partial updates as well, so a
+            // concurrent full/patch update is detected via the row's version column.
+            entity.Version++;
 {{- end }}
-        await _repository.SaveChangesAsync(cancellationToken);
-        OnAfterUpdate(entity);
+            await _repository.SaveChangesAsync(cancellationToken);
+        }
+
+        await OnAfterUpdateAsync(entity, cancellationToken);
 {{- if .HasCacheable }}
         await _cache.RemoveByPrefixAsync("{{ .Entity.Name }}:by-id:", cancellationToken);
 {{- end }}
@@ -182,20 +289,31 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
         {
             return false;
         }
-        OnBeforeDelete(existing);
+
+        var overrideResult = await OnDeleteOverrideAsync(id, existing, cancellationToken);
+        EnsureSuccess(overrideResult);
+
+        if (!overrideResult.IsHandled)
+        {
+            EnsureSuccess(await OnBeforeDeleteAsync(existing, cancellationToken));
 {{- if .HasSoftDelete }}
-        existing.DeletedAt = DateTime.UtcNow;
-        _repository.Update(existing);
+            existing.DeletedAt = DateTime.UtcNow;
+            _repository.Update(existing);
 {{- else }}
-        _repository.Delete(existing);
+            _repository.Delete(existing);
 {{- end }}
-        await _repository.SaveChangesAsync(cancellationToken);
-        OnAfterDelete(existing);
+            await _repository.SaveChangesAsync(cancellationToken);
+        }
+
+        await OnAfterDeleteAsync(existing, cancellationToken);
 {{- if .HasCacheable }}
         await _cache.RemoveByPrefixAsync("{{ .Entity.Name }}:by-id:", cancellationToken);
 {{- end }}
 {{- if .HasEventSourced }}
-        await _eventPublisher.PublishAsync("{{ .Entity.Name }}Deleted", existing, cancellationToken);
+        if (!overrideResult.IsHandled)
+        {
+            await _eventPublisher.PublishAsync("{{ .Entity.Name }}Deleted", existing, cancellationToken);
+        }
 {{- end }}
         return true;
     }

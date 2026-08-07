@@ -15,6 +15,7 @@ using System.IO.Compression;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
 using {{ .Project.Name | pascalcase }}.Application;
+using {{ .Project.Name | pascalcase }}.Application.Services;
 using {{ .Project.Name | pascalcase }}.Infrastructure;
 using {{ .Project.Name | pascalcase }}.Infrastructure.Persistence;
 {{- if $hasSeed }}
@@ -407,11 +408,17 @@ app.UseOutputCache();
 // Map data-layer exceptions to meaningful HTTP status codes instead of a bare 500:
 //   DbUpdateConcurrencyException — an optimistic-lock version conflict (409),
 //   DbUpdateException           — a FK/unique/constraint violation (409).
+//   HookException               — a business hook returned HookResult.Fail(...) (400).
 app.Use(async (context, next) =>
 {
     try
     {
         await next();
+    }
+    catch (HookException ex)
+    {
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        await context.Response.WriteAsJsonAsync(new { message = ex.Message });
     }
     catch (DbUpdateConcurrencyException)
     {

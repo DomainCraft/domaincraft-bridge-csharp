@@ -1,0 +1,32 @@
+namespace {{ .Project.Name | pascalcase }}.Application.Services;
+
+/// <summary>
+/// Result returned by business hooks on the generated entity/auth services.
+/// Hooks return a <see cref="HookResult"/> instead of throwing, and the generated
+/// service translates a failure into an HTTP 400 with the given message:
+///
+///   • <see cref="HookResult.Success"/>  — continue the default generated flow.
+///   • <see cref="HookResult.Handled"/>  — the hook already performed the operation,
+///                                         so the generated EF Core path is skipped.
+///   • <see cref="HookResult.Fail(string)"/> — abort the operation with a reason
+///                                             (no exception needed from your code).
+/// </summary>
+public readonly record struct HookResult(bool IsSuccess, bool IsHandled, string? Error)
+{
+    /// <summary>Continue with the default generated flow.</summary>
+    public static HookResult Success() => new(true, false, null);
+
+    /// <summary>The hook took over the operation; skip the generated persistence
+    /// (used by the On*OverrideAsync hooks).</summary>
+    public static HookResult Handled() => new(true, true, null);
+
+    /// <summary>Abort the operation with a reason surfaced to the caller (HTTP 400).</summary>
+    public static HookResult Fail(string error) => new(false, false, error);
+}
+
+/// <summary>
+/// Thrown internally by a generated service when a hook returns
+/// <see cref="HookResult.Fail"/>. Mapped to HTTP 400, so your hook code never has
+/// to throw for validation — returning a failed result is enough.
+/// </summary>
+public sealed class HookException(string message) : Exception(message);

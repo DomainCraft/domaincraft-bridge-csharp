@@ -1,6 +1,8 @@
 {{- $proj := .Project.Name | pascalcase }}
 {{- $auth := .Project.Auth.Entity }}
+using {{ $proj }}.Application.Services;
 using {{ $proj }}.Domain.Entities;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace {{ $proj }}.Application.Services;
 
@@ -11,8 +13,15 @@ namespace {{ $proj }}.Application.Services;
 /// </summary>
 public partial class AuthService
 {
-    // Runs before a new {{ $auth }} is saved (registration).
-    // partial void OnBeforeRegister({{ $auth }} entity)
+    // Runs before a new {{ $auth }} is saved (registration). Return
+    // HookResult.Fail("reason") to reject registration (mapped to HTTP 400);
+    // return HookResult.Success() to allow it.
+    // protected override async Task<HookResult> OnBeforeRegisterAsync({{ $auth }} entity, CancellationToken ct)
     // {
+    //     if (await Services.GetRequiredService<IInviteService>().IsValidAsync(entity.Email, ct) is false)
+    //     {
+    //         return HookResult.Fail("Email is not on the invite list");
+    //     }
+    //     return HookResult.Success();
     // }
 }

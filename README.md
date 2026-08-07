@@ -33,8 +33,12 @@ Every entity gets a `partial class` service split across two files:
 
 | File | Behavior |
 |------|----------|
-| `src/Application/Generated/<Entity>Service.g.cs` | **Regenerated on every run.** CRUD logic, soft-delete handling, and `partial void OnBeforeCreate/OnBeforeUpdate/OnBeforeDelete` hooks (pre-commit) + `partial void OnAfterCreate/OnAfterUpdate/OnAfterDelete` hooks (post-commit, for side effects). No body. |
-| `src/Application/Services/<Entity>Service.cs` | **Generated once** (`overwrite: false`), owned by you. Implement the hooks to add custom business logic. |
+| `src/Application/Generated/<Entity>Service.g.cs` | **Regenerated on every run.** CRUD logic, soft-delete handling, and overridable **async** hooks: `OnBefore*Async` (return `HookResult.Fail("reason")` to abort → HTTP 400), `OnAfter*Async` (post-commit side effects) and `On*OverrideAsync` (return `HookResult.Handled()` to replace the whole flow). Legacy sync `partial void OnBefore/After*` hooks are still supported (the defaults forward to them). |
+| `src/Application/Services/<Entity>Service.cs` | **Generated once** (`overwrite: false`), owned by you. Override the hooks to add custom business logic. |
+
+The `HookResult`/`HookException` types live in `src/Application/Services/ServiceHooks.cs` (regenerated).
+A hook returns `HookResult.Fail("reason")` to reject an operation — no exception needed; the
+service translates that into an HTTP 400.
 
 Controllers talk to the `I<Entity>Service` interface, and DI resolves it to the *merged* partial
 class — so your hook implementations always take effect:
@@ -43,12 +47,33 @@ class — so your hook implementations always take effect:
 // src/Application/Services/ProductService.cs — never overwritten
 public partial class ProductService
 {
+    // Synchronous validation for backward compatibility with the old partial hooks:
     partial void OnBeforeCreate(Product entity)
     {
         entity.SKU = "CUSTOM-" + Guid.NewGuid().ToString("N")[..8];
     }
+
+    // Async hooks can await and return a result; a failed result aborts with HTTP 400.
+    protected override async Task<HookResult> OnBeforeCreateAsync(Product entity, CancellationToken ct)
+    {
+        var ok = await Services.GetRequiredService<IExternalPricingApi>().ValidateAsync(entity.Price, ct);
+        return ok ? HookResult.Success() : HookResult.Fail("Price is not acceptable");
+    }
+
+    // Full takeover: don't persist at all — publish to a queue instead.
+    protected override async Task<HookResult> OnCreateOverrideAsync(Product entity, CancellationToken ct)
+    {
+        await Services.GetRequiredService<IQueue>().EnqueueAsync(entity, ct);
+        return HookResult.Handled();
+    }
 }
 ```
+
+Need external services in a hook? Resolve them through the inherited
+`Services.GetRequiredService<T>()` — no constructor surgery required. `HookResult` supports
+`Success()` (continue), `Handled()` (skip the generated persistence) and `Fail(reason)` (abort).
+Validation failures map to **400 Bad Request** via the generated `HookException` middleware in
+`Program.cs` (which is `overwrite: false` — re-create it after a regenerate to pick this up).
 
 Add a field to `domain.yaml` and regenerate: only the `.g.cs` part is rewritten, your custom hook
 survives. Rename or delete the entity and the migration engine renames/deletes your custom file
@@ -303,7 +328,7 @@ Permissions map directly from `domain.yaml` to ASP.NET Core authorization:
 | `dbcontext.cs.tmpl` | `DbContext` with entity registration |
 | `repository*.tmpl` | Repository interfaces and implementations |
 | `iservice.cs.tmpl` | Per-entity `I<Entity>Service` interfaces |
-| `generated-service.cs.tmpl` | Regenerated `partial` services with `OnBeforeCreate/Update/Delete` + `OnAfterCreate/Update/Delete` hooks |
+| `generated-service.cs.tmpl` | Regenerated `partial` services with async `OnBefore*Async`/`OnAfter*Async`/`On*OverrideAsync` hooks (HookResult-based; legacy sync partial hooks still forwarded) |
 | `custom-service.cs.tmpl` | Developer-owned `overwrite: false` partial services |
 | `service-registration.cs.tmpl` | Application DI (`I<Entity>Service → <Entity>Service`) |
 | `permissions.cs.tmpl` | Permission policy definitions |
