@@ -1,3 +1,4 @@
+<!-- DomainCraft - GENERATED: DO NOT EDIT. Regenerated on every `domaincraft generate`. Make model changes in domain.yaml. -->
 # {{ .Project.Name | pascalcase }} Project Summary
 
 Generated on: `{{ now }}`
@@ -26,11 +27,11 @@ This is a **clean architecture** C# REST API project with the following layers:
 Business logic lives in per-entity **partial service classes** split into two files:
 
 - `src/Application/Generated/<Entity>Service.g.cs` — **regenerated on every run**. Contains
-  CRUD logic, soft-delete handling, and `partial void OnBeforeCreate/OnBeforeUpdate/OnBeforeDelete`
-  (pre-commit) + `partial void OnAfterCreate/OnAfterUpdate/OnAfterDelete` (post-commit, for side effects)
-  hooks.
+  CRUD logic, soft-delete handling, and async hooks: `OnBefore*Async` (validate/mutate, return
+  `HookResult.Fail("reason")` to abort) + `OnAfter*Async` (post-commit, for side effects) +
+  `On*OverrideAsync` (return `HookResult.Handled()` to replace the flow).
 - `src/Application/Services/<Entity>Service.cs` — **generated once** (`overwrite: false`) and
-  owned by the developer. Implement the partial hooks here to add custom business logic.
+  owned by the developer. Override the hooks here to add custom business logic.
 
 When you add fields to `domain.yaml` and regenerate, only the generated part is rewritten — your
 custom hook code is preserved. Controllers talk to `I<Entity>Service`, which DI resolves to the

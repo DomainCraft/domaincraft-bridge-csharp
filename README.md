@@ -14,10 +14,10 @@ Generated/
 │   ├── Infrastructure/   # EF Core, repositories, seeders, caching (Dapr / in-memory)
 │   └── WebApi/           # Controllers, auth, health checks, Docker
 ├── tests/
-│   ├── ApiTests.cs         # Fixture: WebApplicationFactory + Testcontainers (real PostgreSQL), seeding, health check
-│   ├── AuthTests.cs        # Auth flow tests (register/login/me/duplicate)
-│   ├── EntityTests.cs      # Per-entity CRUD authorization matrix
-│   └── EntityStateTests.cs # Role-based 403, 400 invalid body, authenticated CRUD, optimistic-lock concurrency
+│   ├── ApiTests.g.cs         # Fixture: WebApplicationFactory + Testcontainers (real PostgreSQL), seeding, health check
+│   ├── AuthTests.g.cs        # Auth flow tests (register/login/me/duplicate)
+│   ├── EntityTests.g.cs      # Per-entity CRUD authorization matrix
+│   └── EntityStateTests.g.cs # Role-based 403, 400 invalid body, authenticated CRUD, optimistic-lock concurrency
 ├── EcommercePlatform.sln
 ├── Dockerfile
 └── docker-compose.yml
@@ -33,10 +33,10 @@ Every entity gets a `partial class` service split across two files:
 
 | File | Behavior |
 |------|----------|
-| `src/Application/Generated/<Entity>Service.g.cs` | **Regenerated on every run.** CRUD logic, soft-delete handling, and overridable **async** hooks: `OnBefore*Async` (return `HookResult.Fail("reason")` to abort → HTTP 400), `OnAfter*Async` (post-commit side effects) and `On*OverrideAsync` (return `HookResult.Handled()` to replace the whole flow). Legacy sync `partial void OnBefore/After*` hooks are still supported (the defaults forward to them). |
+| `src/Application/Generated/<Entity>Service.g.cs` | **Regenerated on every run.** CRUD logic, soft-delete handling, and overridable **async** hooks: `OnBefore*Async` (return `HookResult.Fail("reason")` to abort → HTTP 400), `OnAfter*Async` (post-commit side effects) and `On*OverrideAsync` (return `HookResult.Handled()` to replace the whole flow). |
 | `src/Application/Services/<Entity>Service.cs` | **Generated once** (`overwrite: false`), owned by you. Override the hooks to add custom business logic. |
 
-The `HookResult`/`HookException` types live in `src/Application/Services/ServiceHooks.cs` (regenerated).
+The `HookResult`/`HookException` types live in `src/Application/Services/ServiceHooks.g.cs` (regenerated).
 A hook returns `HookResult.Fail("reason")` to reject an operation — no exception needed; the
 service translates that into an HTTP 400.
 
@@ -47,12 +47,6 @@ class — so your hook implementations always take effect:
 // src/Application/Services/ProductService.cs — never overwritten
 public partial class ProductService
 {
-    // Synchronous validation for backward compatibility with the old partial hooks:
-    partial void OnBeforeCreate(Product entity)
-    {
-        entity.SKU = "CUSTOM-" + Guid.NewGuid().ToString("N")[..8];
-    }
-
     // Async hooks can await and return a result; a failed result aborts with HTTP 400.
     protected override async Task<HookResult> OnBeforeCreateAsync(Product entity, CancellationToken ct)
     {
@@ -214,6 +208,16 @@ domaincraft generate --addons dapr --migrate
 ```
 
 The core CLI executes the commands in order from the generated output directory.
+`--prune` also runs them automatically (best-effort) when the schema changed.
+
+> **Renamed entities and fields keep their data.** When a field or entity carries
+> an `old_name` hint, EF Core cannot infer the rename from the model snapshot —
+> `dotnet ef migrations add` would drop the old table/column and add a new one,
+> destroying the data. The bridge generates
+> `src/Infrastructure/Persistence/Migrations/SchemaRenames.cs` with the exact
+> `migrationBuilder.RenameTable(...)` and `RenameColumn(...)` statements. Call
+> `SchemaRenames.Apply(migrationBuilder)` at the top of the `Up()` method of the
+> migration you write for the rename.
 
 ### API versioning & PATCH
 
@@ -273,7 +277,7 @@ entities:
 ### 2. Generate code
 
 ```bash
-domaincraft generate --domain domain.yaml --bridge ../DomainCraftCsharp --output ./generated
+domaincraft generate --domain domain.yaml --bridge ../domaincraft-bridge-csharp --output ./generated
 ```
 
 ### 3. Run
@@ -328,7 +332,7 @@ Permissions map directly from `domain.yaml` to ASP.NET Core authorization:
 | `dbcontext.cs.tmpl` | `DbContext` with entity registration |
 | `repository*.tmpl` | Repository interfaces and implementations |
 | `iservice.cs.tmpl` | Per-entity `I<Entity>Service` interfaces |
-| `generated-service.cs.tmpl` | Regenerated `partial` services with async `OnBefore*Async`/`OnAfter*Async`/`On*OverrideAsync` hooks (HookResult-based; legacy sync partial hooks still forwarded) |
+| `generated-service.cs.tmpl` | Regenerated `partial` services with async `OnBefore*Async`/`OnAfter*Async`/`On*OverrideAsync` hooks (HookResult-based) |
 | `custom-service.cs.tmpl` | Developer-owned `overwrite: false` partial services |
 | `service-registration.cs.tmpl` | Application DI (`I<Entity>Service → <Entity>Service`) |
 | `permissions.cs.tmpl` | Permission policy definitions |

@@ -16,9 +16,7 @@ namespace {{ $proj }}.Application.Services;
 /// to add business logic without touching generated code.
 ///
 /// • Before hooks  — validate / mutate, return HookResult.Fail("reason") to abort
-///   (mapped to HTTP 400; no exception needed). The base implementation forwards
-///   to the legacy sync `partial void OnBefore*` hooks, so existing code keeps
-///   compiling unchanged.
+    ///   (mapped to HTTP 400; no exception needed).
 /// • Override hooks — return HookResult.Handled() to fully replace the generated
 ///   flow (e.g. send to a queue instead of the DB) or HookResult.Fail("reason")
 ///   to abort.
@@ -76,13 +74,5 @@ public partial class {{ .Entity.Name }}Service
     // Runs after a {{ .Entity.Name }} is deleted (or soft-deleted).
     // protected override async Task OnAfterDeleteAsync({{ .Entity.Name }} entity, CancellationToken ct)
     // {
-    // }
-
-    // Legacy sync partial hooks are still supported — they run from the base
-    // implementation of the async before/after hooks above. New code should prefer
-    // the async overrides so it can await and return a result:
-    // partial void OnBeforeCreate({{ .Entity.Name }} entity)
-    // {
-    //     entity.CreatedAt = DateTime.UtcNow;
     // }
 }

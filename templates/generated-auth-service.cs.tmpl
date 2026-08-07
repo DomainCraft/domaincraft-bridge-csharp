@@ -42,16 +42,9 @@ public partial class AuthService : IAuthService
 
     // Business hook — override in the custom partial
     // (src/Application/Services/AuthService.cs). Return HookResult.Fail("reason")
-    // to reject a registration (mapped to HTTP 400). The base implementation
-    // forwards to the legacy sync `partial void OnBeforeRegister` hook.
-    protected virtual async Task<HookResult> OnBeforeRegisterAsync({{ $auth }} entity, CancellationToken ct)
-    {
-        OnBeforeRegister(entity);
-        return HookResult.Success();
-    }
-
-    // Legacy sync partial hook — still supported.
-    partial void OnBeforeRegister({{ $auth }} entity);
+    // to reject a registration (mapped to HTTP 400).
+    protected virtual Task<HookResult> OnBeforeRegisterAsync({{ $auth }} entity, CancellationToken ct)
+        => Task.FromResult(HookResult.Success());
 
     public async Task<{{ $auth }}?> LoginAsync(string email, string password, CancellationToken cancellationToken = default)
     {

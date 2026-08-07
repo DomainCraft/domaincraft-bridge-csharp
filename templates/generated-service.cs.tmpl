@@ -74,8 +74,6 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
     //   HookResult.Fail("reason") to abort (mapped to HTTP 400).
     // • Async before hooks (OnBefore*Async) validate / mutate the entity. Return
     //   HookResult.Fail("reason") to abort cleanly — no exception required.
-    //   Their default implementation forwards to the legacy `partial void
-    //   OnBefore*` hooks, so existing custom partials keep working unchanged.
     // • Async after hooks (OnAfter*Async) run after the change is committed
     //   (SaveChangesAsync returned): the entity has its final persisted state
     //   (server-generated Id, computed readonly values, timestamps). Use them
@@ -89,51 +87,14 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
     protected virtual Task<HookResult> OnDeleteOverrideAsync(object id, {{ .Entity.Name }} entity, CancellationToken ct) => Task.FromResult(HookResult.Success());
 
     // Async before hooks.
-    protected virtual Task<HookResult> OnBeforeCreateAsync({{ .Entity.Name }} entity, CancellationToken ct)
-    {
-        OnBeforeCreate(entity);
-        return Task.FromResult(HookResult.Success());
-    }
-
-    protected virtual Task<HookResult> OnBeforeUpdateAsync({{ .Entity.Name }} entity, CancellationToken ct)
-    {
-        OnBeforeUpdate(entity);
-        return Task.FromResult(HookResult.Success());
-    }
-
-    protected virtual Task<HookResult> OnBeforeDeleteAsync({{ .Entity.Name }} entity, CancellationToken ct)
-    {
-        OnBeforeDelete(entity);
-        return Task.FromResult(HookResult.Success());
-    }
+    protected virtual Task<HookResult> OnBeforeCreateAsync({{ .Entity.Name }} entity, CancellationToken ct) => Task.FromResult(HookResult.Success());
+    protected virtual Task<HookResult> OnBeforeUpdateAsync({{ .Entity.Name }} entity, CancellationToken ct) => Task.FromResult(HookResult.Success());
+    protected virtual Task<HookResult> OnBeforeDeleteAsync({{ .Entity.Name }} entity, CancellationToken ct) => Task.FromResult(HookResult.Success());
 
     // Async after hooks (side effects after commit).
-    protected virtual Task OnAfterCreateAsync({{ .Entity.Name }} entity, CancellationToken ct)
-    {
-        OnAfterCreate(entity);
-        return Task.CompletedTask;
-    }
-
-    protected virtual Task OnAfterUpdateAsync({{ .Entity.Name }} entity, CancellationToken ct)
-    {
-        OnAfterUpdate(entity);
-        return Task.CompletedTask;
-    }
-
-    protected virtual Task OnAfterDeleteAsync({{ .Entity.Name }} entity, CancellationToken ct)
-    {
-        OnAfterDelete(entity);
-        return Task.CompletedTask;
-    }
-
-    // Legacy sync partial hooks — still supported. The default async hooks above
-    // forward to them, and a custom partial may implement them as before.
-    partial void OnBeforeCreate({{ .Entity.Name }} entity);
-    partial void OnBeforeUpdate({{ .Entity.Name }} entity);
-    partial void OnBeforeDelete({{ .Entity.Name }} entity);
-    partial void OnAfterCreate({{ .Entity.Name }} entity);
-    partial void OnAfterUpdate({{ .Entity.Name }} entity);
-    partial void OnAfterDelete({{ .Entity.Name }} entity);
+    protected virtual Task OnAfterCreateAsync({{ .Entity.Name }} entity, CancellationToken ct) => Task.CompletedTask;
+    protected virtual Task OnAfterUpdateAsync({{ .Entity.Name }} entity, CancellationToken ct) => Task.CompletedTask;
+    protected virtual Task OnAfterDeleteAsync({{ .Entity.Name }} entity, CancellationToken ct) => Task.CompletedTask;
 
     // Snapshot of the last persisted record, set right before OnBeforeUpdateAsync
     // runs. The incoming entity has already been mutated by the controller (full

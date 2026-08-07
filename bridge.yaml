@@ -1,6 +1,6 @@
 name: csharp-restful
 description: C# REST API bridge for DomainCraft (EF Core + PostgreSQL + JWT)
-version: "1.0.0"
+version: "1.0.1"
 output_dir: generated
 helpers: templates/_helpers.cs.tmpl
 
@@ -66,79 +66,89 @@ templates:
   # ===== DOMAIN ENTITIES & SHARED =====
   - for: entity
     source: templates/entity.cs.tmpl
-    target: "src/Domain/Entities/{{ .Entity.Name }}.cs"
+    target: "src/Domain/Entities/{{ .Entity.Name }}.g.cs"
 
   - for: project
     source: templates/enums.cs.tmpl
-    target: "src/Domain/Shared/Enums.cs"
+    target: "src/Domain/Shared/Enums.g.cs"
     when: hasEnums
 
   - for: project
     source: templates/PagedResult.cs.tmpl
-    target: "src/Domain/Shared/PagedResult.cs"
+    target: "src/Domain/Shared/PagedResult.g.cs"
 
   # ===== INFRASTRUCTURE PERSISTENCE =====
   - for: project
     source: templates/dbcontext.cs.tmpl
-    target: "src/Infrastructure/Persistence/DomainDbContext.cs"
+    target: "src/Infrastructure/Persistence/DomainDbContext.g.cs"
 
   - for: entity
     source: templates/entity-configuration.cs.tmpl
-    target: "src/Infrastructure/Persistence/Configurations/{{ .Entity.Name }}Configuration.cs"
+    target: "src/Infrastructure/Persistence/Configurations/{{ .Entity.Name }}Configuration.g.cs"
 
   - for: project
     source: templates/seed-seeder.cs.tmpl
-    target: "src/Infrastructure/Persistence/Seeders/DomainSeeder.cs"
+    target: "src/Infrastructure/Persistence/Seeders/DomainSeeder.g.cs"
     when: hasSeed
 
   # ===== APPLICATION REPOSITORIES (interfaces) =====
   - for: entity
     source: templates/irepository.cs.tmpl
-    target: "src/Application/Repositories/I{{ .Entity.Name }}Repository.cs"
+    target: "src/Application/Repositories/I{{ .Entity.Name }}Repository.g.cs"
 
   - for: project
     source: templates/irepository-base.cs.tmpl
-    target: "src/Application/Repositories/IRepository.cs"
+    target: "src/Application/Repositories/IRepository.g.cs"
 
   # ===== INFRASTRUCTURE REPOSITORIES (EF Core implementations) =====
   - for: entity
     source: templates/repository-impl.cs.tmpl
-    target: "src/Infrastructure/Repositories/{{ .Entity.Name }}Repository.cs"
+    target: "src/Infrastructure/Repositories/{{ .Entity.Name }}Repository.g.cs"
 
   - for: project
     source: templates/infrastructure-di.cs.tmpl
-    target: "src/Infrastructure/DependencyInjection.cs"
+    target: "src/Infrastructure/DependencyInjection.g.cs"
 
-  # ===== APPLICATION HANDLERS / SERVICES =====
+  # ===== SCHEMA RENAMES (data-preserving migrations) =====
+  - for: project
+    source: templates/schema-renames.cs.tmpl
+    target: "src/Infrastructure/Persistence/Migrations/SchemaRenames.g.cs"
+    when: hasSchemaRenames
+    # Entities and fields renamed via `old_name` change their table/column name. EF
+    # Core cannot infer a rename from the model snapshot (it would drop + re-add the
+    # table/column, losing data), so this file ships the exact RenameTable /
+    # RenameColumn statements to call from the Up() of the migration you write.
+    # Only generated while renames are pending.
+
   - for: project
     source: templates/permissions.cs.tmpl
-    target: "src/Application/Security/PermissionPolicies.cs"
+    target: "src/Application/Security/PermissionPolicies.g.cs"
     when: hasPermissions
 
   - for: project
     source: templates/IPermissionService.cs.tmpl
-    target: "src/Application/Security/IPermissionService.cs"
+    target: "src/Application/Security/IPermissionService.g.cs"
 
   - for: project
     source: templates/PermissionService.cs.tmpl
-    target: "src/Application/Security/PermissionService.cs"
+    target: "src/Application/Security/PermissionService.g.cs"
 
   - for: project
     source: templates/IOwnerResolver.cs.tmpl
-    target: "src/Application/Security/IOwnerResolver.cs"
+    target: "src/Application/Security/IOwnerResolver.g.cs"
 
   - for: project
     source: templates/OwnerResolver.cs.tmpl
-    target: "src/Application/Security/OwnerResolver.cs"
+    target: "src/Application/Security/OwnerResolver.g.cs"
 
   - for: project
     source: templates/IPasswordHasher.cs.tmpl
-    target: "src/Application/Security/IPasswordHasher.cs"
+    target: "src/Application/Security/IPasswordHasher.g.cs"
     when: hasAuth
 
   - for: project
     source: templates/BcryptPasswordHasher.cs.tmpl
-    target: "src/Infrastructure/Security/BcryptPasswordHasher.cs"
+    target: "src/Infrastructure/Security/BcryptPasswordHasher.g.cs"
     when: hasAuth
 
   # ===== APPLICATION SERVICES (Generation Gap: Core + Custom) =====
@@ -148,11 +158,11 @@ templates:
   # safe across regenerations.
   - for: project
     source: templates/service-hooks.cs.tmpl
-    target: "src/Application/Services/ServiceHooks.cs"
+    target: "src/Application/Services/ServiceHooks.g.cs"
 
   - for: entity
     source: templates/iservice.cs.tmpl
-    target: "src/Application/Services/I{{ .Entity.Name }}Service.cs"
+    target: "src/Application/Services/I{{ .Entity.Name }}Service.g.cs"
 
   - for: entity
     source: templates/generated-service.cs.tmpl
@@ -174,7 +184,7 @@ templates:
   # the custom part (overwrite: false) is scaffolded once for business hooks.
   - for: project
     source: templates/iauth-service.cs.tmpl
-    target: "src/Application/Services/IAuthService.cs"
+    target: "src/Application/Services/IAuthService.g.cs"
     when: hasAuth
 
   - for: project
@@ -194,31 +204,31 @@ templates:
   # (DaprCacheService → dapr/components/statestore.yaml).
   - for: project
     source: templates/icache-service.cs.tmpl
-    target: "src/Application/Caching/ICacheService.cs"
+    target: "src/Application/Caching/ICacheService.g.cs"
 
   - for: project
     source: templates/InMemoryCacheService.cs.tmpl
-    target: "src/Infrastructure/Caching/InMemoryCacheService.cs"
+    target: "src/Infrastructure/Caching/InMemoryCacheService.g.cs"
     when: notHasAddon:dapr
 
   - for: project
     source: templates/DaprCacheService.cs.tmpl
-    target: "src/Infrastructure/Caching/DaprCacheService.cs"
+    target: "src/Infrastructure/Caching/DaprCacheService.g.cs"
     when: hasAddon:dapr
 
   # ===== EMAIL (port + implementations) =====
   - for: project
     source: templates/IEmailService.cs.tmpl
-    target: "src/Application/Email/IEmailService.cs"
+    target: "src/Application/Email/IEmailService.g.cs"
 
   - for: project
     source: templates/InMemoryEmailService.cs.tmpl
-    target: "src/Infrastructure/Email/InMemoryEmailService.cs"
+    target: "src/Infrastructure/Email/InMemoryEmailService.g.cs"
     when: notHasAddon:dapr
 
   - for: project
     source: templates/DaprEmailService.cs.tmpl
-    target: "src/Infrastructure/Email/DaprEmailService.cs"
+    target: "src/Infrastructure/Email/DaprEmailService.g.cs"
     when: hasAddon:dapr
 
   # ===== STORAGE (port + implementations) =====
@@ -228,16 +238,16 @@ templates:
   # without changing application code.
   - for: project
     source: templates/IStorageService.cs.tmpl
-    target: "src/Application/Storage/IStorageService.cs"
+    target: "src/Application/Storage/IStorageService.g.cs"
 
   - for: project
     source: templates/LocalFileStorageService.cs.tmpl
-    target: "src/Infrastructure/Storage/LocalFileStorageService.cs"
+    target: "src/Infrastructure/Storage/LocalFileStorageService.g.cs"
     when: notHasAddon:dapr
 
   - for: project
     source: templates/DaprStorageService.cs.tmpl
-    target: "src/Infrastructure/Storage/DaprStorageService.cs"
+    target: "src/Infrastructure/Storage/DaprStorageService.g.cs"
     when: hasAddon:dapr
 
   # ===== EVENT PUBLISHING (port + implementations) =====
@@ -245,16 +255,16 @@ templates:
   # selected at DI time based on whether the project is generated with --addons dapr.
   - for: project
     source: templates/IEventPublisher.cs.tmpl
-    target: "src/Application/Events/IEventPublisher.cs"
+    target: "src/Application/Events/IEventPublisher.g.cs"
 
   - for: project
     source: templates/InMemoryEventPublisher.cs.tmpl
-    target: "src/Infrastructure/Events/InMemoryEventPublisher.cs"
+    target: "src/Infrastructure/Events/InMemoryEventPublisher.g.cs"
     when: notHasAddon:dapr
 
   - for: project
     source: templates/DaprEventPublisher.cs.tmpl
-    target: "src/Infrastructure/Events/DaprEventPublisher.cs"
+    target: "src/Infrastructure/Events/DaprEventPublisher.g.cs"
     when: hasAddon:dapr
 
   # ===== DAPR COMPONENT MANIFESTS (only when the dapr addon is enabled) =====
@@ -281,16 +291,16 @@ templates:
   # ===== HEALTH CHECKS =====
   - for: project
     source: templates/health-checks.cs.tmpl
-    target: "src/WebApi/HealthChecks/HealthCheckResponseWriter.cs"
+    target: "src/WebApi/HealthChecks/HealthCheckResponseWriter.g.cs"
 
   # ===== REST API CONTROLLERS =====
   - for: entity
     source: templates/controller.cs.tmpl
-    target: "src/WebApi/Controllers/{{ pluralize .Entity.Name }}Controller.cs"
+    target: "src/WebApi/Controllers/{{ pluralize .Entity.Name }}Controller.g.cs"
 
   - for: project
     source: templates/auth-controller.cs.tmpl
-    target: "src/WebApi/Controllers/{{ .Project.Auth.Entity }}Controller.cs"
+    target: "src/WebApi/Controllers/{{ .Project.Auth.Entity }}Controller.g.cs"
     when: hasAuth
 
   # ===== PROJECT FILES =====
@@ -356,19 +366,19 @@ templates:
   # EntityStateTests.cs - role-based 403, 400 invalid body, authenticated CRUD, concurrency
   - for: project
     source: templates/tests.ApiTests.cs.tmpl
-    target: "tests/ApiTests.cs"
+    target: "tests/ApiTests.g.cs"
 
   - for: project
     source: templates/tests.AuthTests.cs.tmpl
-    target: "tests/AuthTests.cs"
+    target: "tests/AuthTests.g.cs"
 
   - for: project
     source: templates/tests.EntityTests.cs.tmpl
-    target: "tests/EntityTests.cs"
+    target: "tests/EntityTests.g.cs"
 
   - for: project
     source: templates/tests.EntityStateTests.cs.tmpl
-    target: "tests/EntityStateTests.cs"
+    target: "tests/EntityStateTests.g.cs"
 
   - for: project
     source: templates/tests.csproj.tmpl
