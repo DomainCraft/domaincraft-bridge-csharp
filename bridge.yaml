@@ -1,6 +1,6 @@
 name: csharp-restful
 description: C# REST API bridge for DomainCraft (EF Core + PostgreSQL + JWT)
-version: "1.0.2"
+version: "1.1.0"
 output_dir: generated
 helpers: templates/_helpers.cs.tmpl
 
@@ -119,11 +119,6 @@ templates:
     # table/column, losing data), so this file ships the exact RenameTable /
     # RenameColumn statements to call from the Up() of the migration you write.
     # Only generated while renames are pending.
-
-  - for: project
-    source: templates/permissions.cs.tmpl
-    target: "src/Application/Security/PermissionPolicies.g.cs"
-    when: hasPermissions
 
   - for: project
     source: templates/IPermissionService.cs.tmpl
@@ -324,10 +319,19 @@ templates:
     source: templates/Program.cs.tmpl
     target: "src/WebApi/Program.cs"
     # Developer-owned: Program.cs is the single host entry point where you add
-    # custom middleware, policies and pipeline tweaks. Marking it overwrite:false
-    # means a regeneration never clobbers those edits. When you DO want the
-    # generator's Program.cs updates to land, delete the file and regenerate.
+    # custom middleware, policies and pipeline tweaks. All generated wiring lives
+    # in the .g.cs extension classes below, so Program.cs stays small and a
+    # regeneration never clobbers your edits (delete it and regenerate to pick up
+    # template updates).
     overwrite: false
+
+  - for: project
+    source: templates/api-service-extensions.cs.tmpl
+    target: "src/WebApi/Extensions/ServiceCollectionExtensions.g.cs"
+
+  - for: project
+    source: templates/api-app-extensions.cs.tmpl
+    target: "src/WebApi/Extensions/ApplicationBuilderExtensions.g.cs"
 
   - for: project
     source: templates/appsettings.json.tmpl

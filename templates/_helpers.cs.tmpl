@@ -23,7 +23,9 @@ Guid.Parse({{ jsonValue $value }})
 DateTime.Parse({{ jsonValue $value }})
 {{- else if eq $csType "JsonDocument" -}}
 JsonDocument.Parse({{ jsonValue $value }}, default)
-{{- else if or (eq $csType "int") (eq $csType "long") (eq $csType "double") (eq $csType "decimal") (eq $csType "bool") -}}
+{{- else if eq $csType "decimal" -}}
+{{ rawSeedValue $value $field.DatabaseType }}m
+{{- else if or (eq $csType "int") (eq $csType "long") (eq $csType "double") (eq $csType "bool") -}}
 {{ rawSeedValue $value $field.DatabaseType }}
 {{- else if eq $csType "string" -}}
 {{- if and .HasAuth $field.Name (eq (lower $field.Name) "password") (not (hasPrefix "$2" (toString $value))) -}}
@@ -223,33 +225,6 @@ Enum.Parse<{{ $csType }}>({{ $value | pascalcase | jsonValue }})
 {{- end -}}
 {{- end -}}
 
-{{- /* permissionPolicyBlock generates the authorization policy registration for one CRUD operation.
-     Role lists are OR (any role passes). @Owner tokens are enforced in the controller.
-     Context: dict with "Op" (string), "Project" (*IRProject). */ -}}
-{{- define "permissionPolicyBlock" -}}
-{{- $op := .Op -}}
-{{- range $.Project.Entities }}
-{{- $perms := .Permissions }}
-{{- if $perms }}
-{{- $roles := index $perms $op }}
-{{- if and $roles (ne (index $roles 0) "*") }}
-{{- $hasOwner := false }}
-{{- $explicit := list }}
-{{- range $roles }}{{- if hasPrefix "@" . }}{{ $hasOwner = true }}{{- else if ne . "*" }}{{ $explicit = append $explicit . }}{{- end }}{{- end }}
-            policy.AddPolicy("{{ .Name }}{{ $op }}", p =>
-            {
-                p.RequireAuthenticatedUser();
-{{- if $hasOwner }}
-                // @Owner and role checks are enforced in the controller.
-{{- else if gt (len $explicit) 0 }}
-                p.RequireAssertion(context =>{{ range $i, $r := $explicit }}{{ if $i }} ||{{ end }} context.User.IsInRole("{{ $r }}"){{ end }});
-{{- end }}
-            });
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end -}}
-
 {{/* ===== Test helpers: shared by the split tests/*.cs.tmpl templates ===== */}}
 
 {{- /* testFieldValue emits a single C# object-initializer line for one field.
@@ -340,18 +315,20 @@ Enum.Parse<{{ $csType }}>({{ $value | pascalcase | jsonValue }})
      relations to the auth entity point at a freshly created owner (so the row doesn't
      collide with the seeded row that already owns one), all other relations map via
      _createdIds (JSON relation name) and scalars via testFieldValue. Optional fields
-     are omitted. Context: dict with "Entity", "AuthName" and "AuthPk". */ -}}
+     are omitted. Context: dict with "Entity", "AuthName", "AuthPk" and optional
+     "Suffix" (avoids duplicate out-vars when the body is emitted twice in one scope). */ -}}
 {{- define "testConcurrencyBody" }}
 {{- $e := .Entity }}
 {{- $authName := .AuthName }}
 {{- $authPk := .AuthPk }}
+{{- $suffix := default "" .Suffix }}
 {{- range $e.Fields }}
 {{- if and (not .IsPrimary) (not .IsMany) (not (isFeatureField .Name)) (not .IsNullable) (not .IsReadonly) }}
 {{- if .IsRelation }}
 {{- if eq .RelationTarget $authName }}
             {{ .Name | pascalcase }} = ownerUser.{{ $authPk }},
 {{- else }}
-            {{ .Name | pascalcase }} = _createdIds.TryGetValue("{{ .RelationTarget }}", out var {{ .Name | camelcase }}Ck) ? ({{ languageType .DatabaseType false }})({{ .Name | camelcase }}Ck) : default,
+            {{ .Name | pascalcase }} = _createdIds.TryGetValue("{{ .RelationTarget }}", out var {{ .Name | camelcase }}{{ $suffix }}Ck) ? ({{ languageType .DatabaseType false }})({{ .Name | camelcase }}{{ $suffix }}Ck) : default,
 {{- end }}
 {{- else }}
 {{- template "testFieldValue" . }}
@@ -378,7 +355,7 @@ Enum.Parse<{{ $csType }}>({{ $value | pascalcase | jsonValue }})
      the same method's scope). */ -}}
 {{- define "testHttpRequestBody" }}
 {{- $entity := .Entity }}
-{{- $suffix := .Suffix }}
+{{- $suffix := default "" .Suffix }}
 {{- range $entity.Fields }}
 {{- if and (not .IsPrimary) (not .IsMany) }}
 {{- if not (isFeatureField .Name) }}

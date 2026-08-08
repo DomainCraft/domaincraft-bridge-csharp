@@ -69,6 +69,12 @@ Need external services in a hook? Resolve them through the inherited
 Validation failures map to **400 Bad Request** via the generated `HookException` middleware in
 `Program.cs` (which is `overwrite: false` — re-create it after a regenerate to pick this up).
 
+> **Recent change:** `Program.cs` is now a thin entry point; the bootstrap logic lives in the
+> regenerated `src/WebApi/Extensions/ServiceCollectionExtensions.g.cs` and
+> `src/WebApi/Extensions/ApplicationBuilderExtensions.g.cs` classes. If you generated before this
+> change, regenerate once (or re-create `Program.cs`) to pick up the new structure — the two
+> `.g.cs` files are added automatically.
+
 Add a field to `domain.yaml` and regenerate: only the `.g.cs` part is rewritten, your custom hook
 survives. Rename or delete the entity and the migration engine renames/deletes your custom file
 alongside it.
@@ -120,6 +126,7 @@ never in `src/Application/Generated/`.
 | Feature | Status | Notes |
 |---------|--------|-------|
 | **JWT Authentication** | Done | Full JWT bearer with configurable secret, issuer, audience; auth controller goes through an `IAuthService` port (Generation Gap partials: `Generated/AuthService.g.cs` + custom `Services/AuthService.cs` with `OnBeforeRegister` hook) — no `DbContext` in the controller |
+| **Auth Bootstrap (`/setup`)** | Done | `POST /api/<auth>/setup` (`[AllowAnonymous]`) bootstraps the **first user** with the `Admin` role (or the first declared role in `auth.roles`) — succeeds only while no user exists yet, then permanently returns `409 Setup already complete`. Registration never self-escalates to Admin; use `/setup` for production bootstrap (and for seeding test admins) |
 | **Pagination / Sort / Search** | Done | `PagedResult<T>` on every list endpoint (`?page=&pageSize=&sort=-field&q=`); DB-side paging, typed sort keys, string search |
 | **Authorization Policies** | Done | Auto-generated per-entity policies (e.g. `ProductRead`, `OrderCreate`) |
 | **Wildcard Permissions** | Done | `*` maps to `[AllowAnonymous]` on controllers |
@@ -168,8 +175,8 @@ When the addon is enabled, this bridge additionally generates:
 - `src/Infrastructure/Storage/DaprStorageService.cs` — objects/files via Dapr's storage **output binding** (local/S3/Blob/GCS).
 - `dapr/components/pubsub.yaml`, `dapr/components/statestore.yaml`, `dapr/components/email.yaml`, `dapr/components/storage.yaml` —
   Dapr component manifests, driven by `project.infrastructure.queue` / `.cache` / `.secrets` / `.storage`.
-- Dapr wiring in `Program.cs` (`AddDaprClient`) and a Dapr sidecar service in `docker-compose.yml`.
-- Hangfire background processing (`Program.cs` + `Hangfire.PostgreSql`) with a daily recurring seed/health job.
+- Dapr wiring (`AddDaprClient`) lives in `ServiceCollectionExtensions.g.cs`, and a Dapr sidecar service in `docker-compose.yml`.
+- Hangfire background processing (`ServiceCollectionExtensions.g.cs` + `Hangfire.PostgreSql`) with a daily recurring seed/health job.
 
 `event_sourced` entities publish `X Created / Updated / Deleted` events after a successful
 `SaveChangesAsync`. Swap the broker / cache store / mailer / object store by editing the manifests under
@@ -219,10 +226,26 @@ The core CLI executes the commands in order from the generated output directory.
 > `SchemaRenames.Apply(migrationBuilder)` at the top of the `Up()` method of the
 > migration you write for the rename.
 
+### Auth endpoints (`login` / `register` / `me` / `setup`)
+
+```
+auth:
+  endpoints:        # all default to true; set false to omit an endpoint
+    login: true
+    register: true
+    me: true
+    setup: true
+```
+
+- `POST /api/<auth>/login` — email + password → JWT.
+- `POST /api/<auth>/register` — `[AllowAnonymous]`; creates a user with the **default role** (never Admin).
+- `GET /api/<auth>/me` — `[Authorize]`; returns the current user (password hash scrubbed).
+- `POST /api/<auth>/setup` — `[AllowAnonymous]`; bootstraps the **first user** with the `Admin` role (or the first declared role in `auth.roles`) while **no user exists yet**, then permanently `409`. This is the safe production bootstrap path: an open register endpoint can never silently escalate a caller to Admin. The DomainCraft compliance suite uses it to seed its first admin.
+
 ### API versioning & PATCH
 
 - Every controller is marked `[ApiVersion("1.0")]`; `AddApiVersioning` + `AddApiExplorer`
-  are wired in `Program.cs`. Future routes add `[ApiVersion("2.0")]` without touching v1.
+  are wired in `ServiceCollectionExtensions.g.cs`. Future routes add `[ApiVersion("2.0")]` without touching v1.
 - Every resource endpoint ships a `PATCH /api/.../{id}` **merge-patch** action: it reads the
   body as a `JsonElement` and assigns only the scalar fields present in the JSON. It is built
   on `System.Text.Json` — **no Newtonsoft.Json.** The project intentionally avoids the
@@ -299,6 +322,33 @@ dotnet test
 docker-compose up --build
 ```
 
+### 6. Bootstrap the first admin
+
+The generated app listens on `project.deploy.port` in Docker (9000 in the kitchen-sink; local `dotnet run` uses the port from `ASPNETCORE_URLS`):
+
+```bash
+curl -X POST http://localhost:9000/api/user/setup \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@example.com","password":"YourPass123!"}'
+# 201 Created — only succeeds while no user exists yet (then permanently 409)
+```
+
+## Bridge Certification (TCK)
+
+This bridge is certified against the DomainCraft **compliance suite** — a hand-written, language-agnostic k6 suite that asserts the HTTP contract of a generated app (status codes, RBAC/`@Owner` isolation, hidden/readonly fields, optimistic lock, seed data, versioning, validations). The reference fixture is `DomainCraft/compliance-suite/kitchen-sink.yaml`.
+
+Run it locally against this bridge:
+
+```bash
+# from DomainCraft/
+go build -o bin/domaincraft ./cmd/domaincraft
+./bin/domaincraft generate --domain compliance-suite/kitchen-sink.yaml --bridge ../domaincraft-bridge-csharp --output /tmp/tck-app --non-interactive
+cd /tmp/tck-app && docker compose up -d --build
+k6 run -e API_URL=http://localhost:9000 ../DomainCraft/compliance-suite/suite.js
+```
+
+For continuous certification in this repo's CI, copy `DomainCraft/compliance-suite/certification.yml` to `.github/workflows/certification.yml` — it checks out the core, generates with these templates, starts the app, and runs the suite.
+
 ## Permission System
 
 Permissions map directly from `domain.yaml` to ASP.NET Core authorization:
@@ -335,13 +385,11 @@ Permissions map directly from `domain.yaml` to ASP.NET Core authorization:
 | `generated-service.cs.tmpl` | Regenerated `partial` services with async `OnBefore*Async`/`OnAfter*Async`/`On*OverrideAsync` hooks (HookResult-based) |
 | `custom-service.cs.tmpl` | Developer-owned `overwrite: false` partial services |
 | `service-registration.cs.tmpl` | Application DI (`I<Entity>Service → <Entity>Service`) |
-| `permissions.cs.tmpl` | Permission policy definitions |
 | `IPermissionService.cs.tmpl` | Permission service interface |
 | `PermissionService.cs.tmpl` | Permission service implementation |
 | `IOwnerResolver.cs.tmpl` | Owner resolver interface |
 | `OwnerResolver.cs.tmpl` | Owner resolver implementation |
 | `seed-seeder.cs.tmpl` | Database seeder |
-| `redis-cache.cs.tmpl` | *(removed — no direct Redis)* |
 | `DaprCacheService.cs.tmpl` | Distributed cache via Dapr state store (`--addons dapr`) |
 | `InMemoryCacheService.cs.tmpl` | In-process cache (default) |
 | `IEmailService.cs.tmpl` | Email port |
@@ -349,7 +397,9 @@ Permissions map directly from `domain.yaml` to ASP.NET Core authorization:
 | `InMemoryEmailService.cs.tmpl` | Email logging (default) |
 | `icache-service.cs.tmpl` | Cache service interface |
 | `health-checks.cs.tmpl` | Health check endpoints |
-| `Program.cs.tmpl` | Application entry point |
+| `Program.cs.tmpl` | Thin application entry point (`overwrite: false`) that calls the generated extension classes |
+| `api-service-extensions.cs.tmpl` | `ServiceCollectionExtensions.g.cs`: DbContext, JWT, policies, rate limiting, CORS, Swagger, versioning, Hangfire |
+| `api-app-extensions.cs.tmpl` | `ApplicationBuilderExtensions.g.cs`: pipeline, endpoints, health checks, DB init + seed |
 | `Dockerfile.tmpl` | Multi-stage Docker build |
 | `docker-compose.yml.tmpl` | Docker Compose with PostgreSQL + API |
 | `tests.ApiTests.cs.tmpl` | Integration-test fixture, container, seeding, health check (partial `ApiTests`) |

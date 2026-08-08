@@ -36,12 +36,12 @@ public class DaprStorageService : IStorageService
     {
         try
         {
-            var bytes = await _dapr.InvokeBindingAsync<byte[]>(
+            var bytes = await _dapr.InvokeBindingAsync<byte[], byte[]>(
                 _bindingName,
                 "get",
                 data: null,
                 metadata: new Dictionary<string, string> { ["key"] = key },
-                cancellationToken);
+                cancellationToken: cancellationToken);
             if (bytes == null || bytes.Length == 0)
             {
                 return null;
@@ -66,7 +66,7 @@ public class DaprStorageService : IStorageService
             {
                 metadata["contentType"] = contentType;
             }
-            await _dapr.InvokeBindingAsync(_bindingName, "create", buffer.ToArray(), metadata, cancellationToken);
+            await _dapr.InvokeBindingAsync<byte[]>(_bindingName, "create", buffer.ToArray(), metadata, cancellationToken: cancellationToken);
         }
         catch (Exception ex)
         {
@@ -79,12 +79,12 @@ public class DaprStorageService : IStorageService
     {
         try
         {
-            await _dapr.InvokeBindingAsync(
+            await _dapr.InvokeBindingAsync<byte[]>(
                 _bindingName,
                 "delete",
                 data: null,
                 metadata: new Dictionary<string, string> { ["key"] = key },
-                cancellationToken);
+                cancellationToken: cancellationToken);
         }
         catch (Exception ex)
         {

@@ -8,6 +8,7 @@
 using {{ $proj }}.Application.Caching;
 using Dapr.Client;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace {{ $proj }}.Infrastructure.Caching;
 
@@ -36,7 +37,7 @@ public class DaprCacheService : ICacheService
     {
         try
         {
-            return await _dapr.GetStateAsync<T>(_storeName, key, cancellationToken);
+            return await _dapr.GetStateAsync<T>(_storeName, key, cancellationToken: cancellationToken);
         }
         catch (Exception ex)
         {
@@ -54,7 +55,7 @@ public class DaprCacheService : ICacheService
             {
                 ["ttlInSeconds"] = Math.Max(1, (long)ttl.TotalSeconds).ToString()
             };
-            await _dapr.SaveStateAsync(_storeName, key, value, metadata, cancellationToken);
+            await _dapr.SaveStateAsync(_storeName, key, value, metadata: metadata, cancellationToken: cancellationToken);
         }
         catch (Exception ex)
         {
@@ -66,7 +67,7 @@ public class DaprCacheService : ICacheService
     {
         try
         {
-            await _dapr.DeleteStateAsync(_storeName, key, cancellationToken);
+            await _dapr.DeleteStateAsync(_storeName, key, cancellationToken: cancellationToken);
         }
         catch (Exception ex)
         {

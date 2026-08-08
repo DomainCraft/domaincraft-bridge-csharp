@@ -79,9 +79,10 @@ public partial class ApiTests : IClassFixture<WebApplicationFactory<Program>>, I
             builder.UseEnvironment("Testing");
 
             // UseSetting (not just AddInMemoryCollection) so the overrides are visible to
-            // Program's top-level statements: the DbContext registration reads
-            // TestDb:ConnectionString from builder.Configuration while still in Program.cs.
-            // AddInMemoryCollection is applied only after the app is built and would be too late.
+            // ServiceCollectionExtensions.AddWebApiServices, which reads
+            // TestDb:ConnectionString from the builder's configuration during service
+            // registration. AddInMemoryCollection is applied only after the app is built
+            // and would be too late.
             builder.UseSetting("TestDb:ConnectionString", _connectionString);
 {{- if .Project.HasAuth }}
             builder.UseSetting("Jwt:Secret", "TestSecretKey123456789012345678901234567890");

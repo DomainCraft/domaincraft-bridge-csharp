@@ -292,7 +292,7 @@ public partial class ApiTests
 
         var updateBody = new
         {
-{{- template "testConcurrencyBody" (dict "Entity" . "AuthName" $authType "AuthPk" $authPk) }}
+{{- template "testConcurrencyBody" (dict "Entity" . "AuthName" $authType "AuthPk" $authPk "Suffix" "U") }}
             version = version,
         };
         var firstUpdate = SendAsync("PUT", "/api/{{ .NamePlural | lowercase }}/" + id, adminToken, updateBody);
