@@ -1,6 +1,6 @@
 # DomainCraft C# Bridge
 
-A bridge template for [DomainCraft](https://github.com/Gitlawb/domaincraft) that generates a production-ready **ASP.NET Core REST API** with clean architecture, EF Core, PostgreSQL, JWT authentication, and more.
+A bridge template for [DomainCraft](https://github.com/DomainCraft/DomainCraft) that generates a production-ready **ASP.NET Core REST API** with clean architecture, EF Core, PostgreSQL, JWT authentication, and more.
 
 ## What It Generates
 
@@ -382,4 +382,4 @@ These features are defined in the domain.yaml spec but not yet fully implemented
 
 ## License
 
-Part of the [DomainCraft](https://github.com/Gitlawb/domaincraft) project.
+Part of the [DomainCraft](https://github.com/DomainCraft/DomainCraft) project.

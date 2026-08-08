@@ -1,6 +1,6 @@
 name: csharp-restful
 description: C# REST API bridge for DomainCraft (EF Core + PostgreSQL + JWT)
-version: "1.0.1"
+version: "1.0.2"
 output_dir: generated
 helpers: templates/_helpers.cs.tmpl
 

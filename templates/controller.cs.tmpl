@@ -7,6 +7,8 @@
 {{- $proj := .Project.Name | pascalcase -}}
 {{- $entity := .Entity.Name -}}
 {{- $perms := .Permissions -}}
+{{- $isAuth := false -}}
+{{- if and .Project.Auth (ne .Project.Auth.Type "none") }}{{ $isAuth = eq .Entity.Name .Project.Auth.Entity }}{{ end -}}
 {{- $pk := .PrimaryKey -}}
 {{- $pkType := "Guid" -}}
 {{- if $pk }}{{ $pkType = languageType $pk.DatabaseType false }}{{ end -}}
@@ -41,15 +43,24 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     private readonly I{{ $entity }}Service _service;
     private readonly IPermissionService _permissionService;
     private readonly ILogger<{{ pluralize $entity }}Controller> _logger;
+{{- if $isAuth }}
+    private readonly IPasswordHasher _passwordHasher;
+{{- end }}
 
     public {{ pluralize $entity }}Controller(
         I{{ $entity }}Service service,
         IPermissionService permissionService,
-        ILogger<{{ pluralize $entity }}Controller> logger)
+        ILogger<{{ pluralize $entity }}Controller> logger
+{{- if $isAuth }},
+        IPasswordHasher passwordHasher
+{{- end }})
     {
         _service = service ?? throw new ArgumentNullException(nameof(service));
         _permissionService = permissionService ?? throw new ArgumentNullException(nameof(permissionService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+{{- if $isAuth }}
+        _passwordHasher = passwordHasher ?? throw new ArgumentNullException(nameof(passwordHasher));
+{{- end }}
     }
 
     /// <summary>
@@ -60,12 +71,16 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     [ProducesResponseType(typeof(PagedResult<{{ $entity }}Dto>), StatusCodes.Status200OK)]
     public async Task<ActionResult<PagedResult<{{ $entity }}Dto>>> GetAll(
         [FromQuery] int page = 1,
-        [FromQuery] int pageSize = {{ .Project.Pagination.DefaultPageSize }},
+        [FromQuery] int? pageSize = null,
+        [FromQuery] int? limit = null,
         [FromQuery] string? sort = null,
         [FromQuery] string? search = null)
     {
-        _logger.LogInformation("GET /api/{{ pluralize $entity | lowercase }} - page {Page} size {PageSize}", page, pageSize);
-        var result = await _service.GetPagedAsync(page, pageSize, sort, search);
+        // `limit` is the common REST pagination alias; `pageSize` is honored too.
+        var effectiveSize = limit ?? pageSize ?? {{ .Project.Pagination.DefaultPageSize }};
+        effectiveSize = Math.Clamp(effectiveSize, 1, {{ .Project.Pagination.MaxPageSize }});
+        _logger.LogInformation("GET /api/{{ pluralize $entity | lowercase }} - page {Page} size {PageSize}", page, effectiveSize);
+        var result = await _service.GetPagedAsync(page, effectiveSize, sort, search);
 {{- if and $perms $perms.Read (hasOwnershipToken $perms.Read) }}
         // @Owner read: without an explicit role, only expose records the caller owns.
 {{- $readBypass := list }}
@@ -129,6 +144,21 @@ public class {{ pluralize $entity }}Controller : ControllerBase
 {{- if .HasAuditLog }}
         entity.CreatedBy = GetCurrentUserId();
         entity.UpdatedBy = GetCurrentUserId();
+{{- end }}
+{{- if and .Project.Auth (ne .Project.Auth.Type "none") }}
+{{- $authOwner := .Project.Auth.Entity }}
+{{- range .Entity.Fields }}
+{{- if and .IsRelation (not .IsMany) (eq .RelationTarget $authOwner) (not (isFeatureField .Name)) }}
+{{- $fkProp := fkName .Name | pascalcase }}
+        // Auto-assign the {{ $fkProp }} owner to the current user when not provided.
+        var ownerId = GetCurrentUserId();
+        if (ownerId != Guid.Empty && (entity.{{ $fkProp }} == null || entity.{{ $fkProp }} == Guid.Empty))
+        {
+            entity.{{ $fkProp }} = ownerId;
+        }
+
+{{- end }}
+{{- end }}
 {{- end }}
 
         await _service.CreateAsync(entity);
@@ -219,6 +249,18 @@ public class {{ pluralize $entity }}Controller : ControllerBase
             _logger.LogWarning(ex, "Invalid patch applied to {{ $entity }} {id}", id);
             return BadRequest(new { message = "Invalid patch document" });
         }
+{{- if .HasOptimisticLock }}
+        // Optimistic-lock precondition: a merge patch may carry a version token; if it
+        // does not match the stored row, another request already committed — reject 409.
+        if (patch.TryGetProperty("version", out var versionEl))
+        {
+            var clientVersion = versionEl.GetInt32();
+            if (clientVersion != existingEntity.Version)
+            {
+                return Conflict(new { message = "Concurrency conflict: the resource was modified by another request" });
+            }
+        }
+{{- end }}
 {{- if .HasAuditLog }}
         existingEntity.UpdatedBy = GetCurrentUserId();
 {{- end }}
@@ -303,6 +345,11 @@ public class {{ pluralize $entity }}Controller : ControllerBase
 {{- template "requestFieldProperties" . }}
 {{- end }}
 {{- end }}
+{{- if $isAuth }}
+        [Required]
+        [JsonPropertyName("password")]
+        public string Password { get; set; }
+{{- end }}
     }
 
     public class Update{{ $entity }}Request
@@ -312,6 +359,10 @@ public class {{ pluralize $entity }}Controller : ControllerBase
 {{- else if not .IsPrimary }}
 {{- template "requestFieldProperties" . }}
 {{- end }}
+{{- end }}
+{{- if $isAuth }}
+        [JsonPropertyName("password")]
+        public string? Password { get; set; }
 {{- end }}
 {{- if .HasOptimisticLock }}
         [JsonPropertyName("version")]
@@ -358,6 +409,9 @@ public class {{ pluralize $entity }}Controller : ControllerBase
 {{- template "mapRequestToEntity" . }}
 {{- end }}
 {{- end }}
+{{- if $isAuth }}
+        entity.Password = _passwordHasher.HashPassword(request.Password);
+{{- end }}
     }
 
     private void MapUpdateRequestToEntity(Update{{ $entity }}Request request, {{ $entity }} entity)
@@ -367,6 +421,12 @@ public class {{ pluralize $entity }}Controller : ControllerBase
 {{- else if not .IsPrimary }}
 {{- template "mapRequestToEntity" . }}
 {{- end }}
+{{- end }}
+{{- if $isAuth }}
+        if (!string.IsNullOrEmpty(request.Password))
+        {
+            entity.Password = _passwordHasher.HashPassword(request.Password);
+        }
 {{- end }}
     }
 
@@ -385,6 +445,12 @@ public class {{ pluralize $entity }}Controller : ControllerBase
 {{- if or (isFeatureField .Name) (eq (lower .Name) "password") (.IsReadonly) }}
 {{- else if .IsPrimary }}
 {{- else if .IsRelation }}
+{{- if not .IsMany }}
+        if (patch.TryGetProperty("{{ .Name | camelcase }}", out var {{ .Name | camelcase }}El))
+        {
+            entity.{{ fkName .Name | pascalcase }} = {{ .Name | camelcase }}El.Deserialize<{{ languageType .DatabaseType .IsNullable }}>();
+        }
+{{- end }}
 {{- else if .IsArray }}
 {{- else if (isEnumType .DatabaseType) }}
 {{- else if eq .DatabaseType "json" }}

@@ -30,4 +30,11 @@ public interface IAuthService
 
     /// <summary>Get a {{ $auth | lowercase }} by ID (used by /me).</summary>
     Task<{{ $auth }}?> GetByIdAsync(object id, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Bootstrap the first admin: succeeds only while no {{ $auth | lowercase }}
+    /// exists yet, otherwise returns null. Creates the user with the Admin role
+    /// (or the first declared role) in a single transaction.
+    /// </summary>
+    Task<{{ $auth }}?> SetupFirstAdminAsync(string email, string password, CancellationToken cancellationToken = default);
 }

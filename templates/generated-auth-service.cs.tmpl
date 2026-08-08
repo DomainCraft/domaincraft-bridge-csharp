@@ -2,10 +2,18 @@
 {{- $auth := .Project.Auth.Entity }}
 {{- $authPk := "Id" }}
 {{- $authPkType := "Guid" }}
+{{- $roleProp := "" }}
+{{- $roleDbType := "" }}
+{{- $firstRole := "" }}
+{{- range .Project.Auth.Roles }}
+{{- if eq (lower .) "admin" }}{{ $firstRole = . }}{{ end }}
+{{- end }}
+{{- if not $firstRole }}{{ $firstRole = (index .Project.Auth.Roles 0) | pascalcase }}{{ end }}
 {{- range .Project.Entities }}
 {{- if eq .Name $auth }}
 {{- range .Fields }}
 {{- if .IsPrimary }}{{ $authPk = .Name | pascalcase }}{{ $authPkType = languageType .DatabaseType false }}{{ end }}
+{{- if and (not .IsPrimary) (not .IsRelation) (eq (.Name | lower) "role") }}{{ $roleProp = .Name | pascalcase }}{{ $roleDbType = .DatabaseType }}{{ end }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -97,5 +105,48 @@ public partial class AuthService : IAuthService
     public async Task<{{ $auth }}?> GetByIdAsync(object id, CancellationToken cancellationToken = default)
     {
         return await _repository.GetByIdAsync(id, cancellationToken);
+    }
+
+    /// <summary>
+    /// Bootstrap the first admin in one atomic operation: only succeeds while no
+    /// {{ $auth | lowercase }} exists yet (returns null once anyone does), creates
+    /// the user with the Admin role (or the first declared role). Safe to expose
+    /// publicly — once any account exists it permanently refuses the request.
+    /// </summary>
+    public async Task<{{ $auth }}?> SetupFirstAdminAsync(string email, string password, CancellationToken cancellationToken = default)
+    {
+        if (await _repository.AnyAsync(e => true, cancellationToken))
+            return null;
+
+        var entity = new {{ $auth }}
+        {
+{{- if eq $authPkType "Guid" }}
+            {{ $authPk }} = Guid.NewGuid(),
+{{- end }}
+            Email = email,
+            Password = _passwordHasher.HashPassword(password),
+{{- range .Project.Entities }}
+{{- if eq .Name $auth }}
+{{- range .Fields }}
+            {{- if and (not .IsPrimary) (not .IsRelation) (not (isFeatureField .Name)) (not (eq (.Name | lower) "email")) (not (eq (.Name | lower) "password")) }}
+            {{- if eq (.Name | lower) "role" }}
+            {{ .Name | pascalcase }} = {{ if isEnumType $roleDbType }}{{ enumTypeName $roleDbType }}.{{ $firstRole }}{{ else }}"{{ $firstRole }}"{{ end }},
+            {{- else if or .DefaultValue (not .IsNullable) }}
+            {{ .Name | pascalcase }} = {{ template "defaultValueExpression" . }},
+            {{- end }}
+            {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+        };
+
+        var hookResult = await OnBeforeRegisterAsync(entity, cancellationToken);
+        if (hookResult.IsSuccess is false)
+        {
+            throw new HookException(hookResult.Error ?? "Registration was rejected.");
+        }
+        await _repository.AddAsync(entity, cancellationToken);
+        await _repository.SaveChangesAsync(cancellationToken);
+        return entity;
     }
 }
