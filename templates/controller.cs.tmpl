@@ -6,9 +6,8 @@
  */
 {{- $proj := .Project.Name | pascalcase -}}
 {{- $entity := .Entity.Name -}}
-{{- $perms := .Permissions -}}
 {{- $isAuth := false -}}
-{{- if and .Project.Auth (ne .Project.Auth.Type "none") }}{{ $isAuth = eq .Entity.Name .Project.Auth.Entity }}{{ end -}}
+{{- if .Project.HasAuth }}{{ $isAuth = eq .Entity.Name .Project.Auth.Entity }}{{ end -}}
 {{- $pk := .PrimaryKey -}}
 {{- $pkType := "Guid" -}}
 {{- if $pk }}{{ $pkType = languageType $pk.DatabaseType false }}{{ end -}}
@@ -19,6 +18,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Asp.Versioning;
+using {{ $proj }}.Application.Query;
 using {{ $proj }}.Application.Security;
 using {{ $proj }}.Application.Services;
 using {{ $proj }}.Domain.Entities;
@@ -63,10 +63,16 @@ public class {{ pluralize $entity }}Controller : ControllerBase
 {{- end }}
     }
 
+{{- /* The endpoint contract (IREntity.Endpoints) is the single source of truth for
+       method, operation, authorization plan and concurrency. Only the C#-specific
+       bodies and response-type annotations live here. */ -}}
+{{- range .Endpoints }}
+{{- if eq .Operation "list" }}
+
     /// <summary>
     /// Get all {{ pluralize $entity | lowercase }}
     /// </summary>
-{{- template "authOrAuthorize" (dict "Roles" (and $perms $perms.Read) "PermsDefined" (ne $perms nil) "Entity" $entity "Op" "Read") }}
+{{- template "authOrAuthorize" (dict "Plan" .Auth "Entity" $entity "Op" .AuthPolicy) }}
     [HttpGet]
     [ProducesResponseType(typeof(PagedResult<{{ $entity }}Dto>), StatusCodes.Status200OK)]
     public async Task<ActionResult<PagedResult<{{ $entity }}Dto>>> GetAll(
@@ -74,21 +80,45 @@ public class {{ pluralize $entity }}Controller : ControllerBase
         [FromQuery] int? pageSize = null,
         [FromQuery] int? limit = null,
         [FromQuery] string? sort = null,
-        [FromQuery] string? search = null)
+        [FromQuery] string? search = null,
+        [FromQuery] string? filter = null,
+        [FromQuery] string? cursor = null,
+        [FromQuery] string? include = null)
     {
-        // `limit` is the common REST pagination alias; `pageSize` is honored too.
-        var effectiveSize = limit ?? pageSize ?? {{ .Project.Pagination.DefaultPageSize }};
-        effectiveSize = Math.Clamp(effectiveSize, 1, {{ .Project.Pagination.MaxPageSize }});
-        _logger.LogInformation("GET /api/{{ pluralize $entity | lowercase }} - page {Page} size {PageSize}", page, effectiveSize);
-        var result = await _service.GetPagedAsync(page, effectiveSize, sort, search);
-{{- if and $perms $perms.Read (hasOwnershipToken $perms.Read) }}
+        // The runtime mirror of the core's query contract: normalize the transport
+        // params into one ListQuery (`limit` wins over `pageSize`, both clamped;
+        // `cursor` selects keyset pagination on the integer PK; `include` selects
+        // which relations to eager-load).
+        var listQuery = ListQuery.FromQuery(page, pageSize, limit, sort, search, filter, cursor, include, {{ $.Project.Pagination.DefaultPageSize }}, {{ $.Project.Pagination.MaxPageSize }});
+        _logger.LogInformation("GET /api/{{ pluralize $entity | lowercase }} - page {Page} size {PageSize}", listQuery.Page, listQuery.PageSize);
+        PagedResult<{{ $entity }}> result;
+        try
+        {
+            result = await _service.GetPagedAsync(listQuery);
+        }
+        catch (FormatException ex)
+        {
+            // The core's filter grammar (spec/query.md) is parsed and validated at
+            // the repository; a malformed expression surfaces as a 400, not a 500.
+            _logger.LogWarning(ex, "Invalid filter expression for {{ pluralize $entity | lowercase }}");
+            return BadRequest(new { code = "INVALID_FILTER", message = ex.Message });
+        }
+        catch (System.Data.Common.DbException ex) when (ex.SqlState == "22P02")
+        {
+            // An ordered (numeric) JSON-path operator hit a non-numeric leaf, so the
+            // database cast failed (invalid_text_representation). Surface a clean 400,
+            // not a 500.
+            _logger.LogWarning(ex, "Non-numeric JSON value in an ordered filter for {{ pluralize $entity | lowercase }}");
+            return BadRequest(new { code = "INVALID_FILTER", message = "A JSON value compared with an ordered operator is not numeric" });
+        }
+{{- if .Auth }}
+{{- if .Auth.HasOwner }}
         // @Owner read: without an explicit role, only expose records the caller owns.
-{{- $readBypass := list }}
-{{- range $perms.Read }}{{- if not (hasPrefix "@" .) }}{{ $readBypass = append $readBypass . }}{{ end }}{{- end }}
-        if (!_permissionService.HasAnyRole(new[] { {{- range $i, $r := $readBypass }}{{ if $i }}, {{ end }}"{{ $r }}"{{- end }} }))
+        if (!_permissionService.HasAnyRole(new[] { {{- range $i, $r := .Auth.Roles }}{{ if $i }}, {{ end }}"{{ $r }}"{{- end }} }))
         {
             result.Items = result.Items.Where(e => _permissionService.IsOwner(e)).ToList();
         }
+{{- end }}
 {{- end }}
         var dtos = result.Items.Select(MapToDto).ToList();
         return Ok(new PagedResult<{{ $entity }}Dto>
@@ -96,14 +126,16 @@ public class {{ pluralize $entity }}Controller : ControllerBase
             Items = dtos,
             TotalCount = result.TotalCount,
             Page = result.Page,
-            PageSize = result.PageSize
+            PageSize = result.PageSize,
+            NextCursor = result.NextCursor
         });
     }
+{{- else if eq .Operation "get" }}
 
     /// <summary>
     /// Get a specific {{ $entity | lowercase }} by ID
     /// </summary>
-{{- template "authOrAuthorize" (dict "Roles" (and $perms $perms.Read) "PermsDefined" (ne $perms nil) "Entity" $entity "Op" "Read") }}
+{{- template "authOrAuthorize" (dict "Plan" .Auth "Entity" $entity "Op" .AuthPolicy) }}
     [HttpGet("{id}")]
     [ProducesResponseType(typeof({{ $entity }}Dto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -116,21 +148,24 @@ public class {{ pluralize $entity }}Controller : ControllerBase
             _logger.LogWarning("{{ $entity }} with ID {id} not found", id);
             return NotFound();
         }
-{{- if and $perms $perms.Read (hasOwnershipToken $perms.Read) }}
+{{- if .Auth }}
+{{- if .Auth.HasOwner }}
         // @Owner read: forbid unless the caller is the owner or holds an explicit role.
-        if ({{ template "ownerCheck" (dict "Roles" $perms.Read "Var" "entity") }})
+        if ({{ template "ownerCheck" (dict "Plan" .Auth "Var" "entity") }})
         {
             return Forbid();
         }
 {{- end }}
+{{- end }}
         var dto = MapToDto(entity);
         return Ok(dto);
     }
+{{- else if eq .Operation "create" }}
 
     /// <summary>
     /// Create a new {{ $entity | lowercase }}
     /// </summary>
-{{- template "authOrAuthorize" (dict "Roles" (and $perms $perms.Create) "PermsDefined" (ne $perms nil) "Entity" $entity "Op" "Create") }}
+{{- template "authOrAuthorize" (dict "Plan" .Auth "Entity" $entity "Op" .AuthPolicy) }}
     [HttpPost]
     [ProducesResponseType(typeof({{ $entity }}Dto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -141,14 +176,14 @@ public class {{ pluralize $entity }}Controller : ControllerBase
         var entity = new {{ $entity }}();
         MapCreateRequestToEntity(request, entity);
 
-{{- if .HasAuditLog }}
+{{- if $.HasAuditLog }}
         entity.CreatedBy = GetCurrentUserId();
         entity.UpdatedBy = GetCurrentUserId();
 {{- end }}
-{{- if and .Project.Auth (ne .Project.Auth.Type "none") }}
-{{- $authOwner := .Project.Auth.Entity }}
-{{- range .Entity.Fields }}
-{{- if and .IsRelation (not .IsMany) (eq .RelationTarget $authOwner) (not (isFeatureField .Name)) }}
+{{- if $.Project.HasAuth }}
+{{- $authOwner := $.Project.Auth.Entity }}
+{{- range $.Entity.Fields }}
+{{- if and .IsRelation (not .IsMany) (eq .RelationTarget $authOwner) (not .IsFeatureField) }}
 {{- $fkProp := fkName .Name | pascalcase }}
         // Auto-assign the {{ $fkProp }} owner to the current user when not provided.
         var ownerId = GetCurrentUserId();
@@ -163,13 +198,14 @@ public class {{ pluralize $entity }}Controller : ControllerBase
 
         await _service.CreateAsync(entity);
         var dto = MapToDto(entity);
-        return CreatedAtAction(nameof(GetById), new { id = entity.{{ if .PrimaryKey }}{{ .PrimaryKey.Name | pascalcase }}{{ else }}Id{{ end }} }, dto);
+        return CreatedAtAction(nameof(GetById), new { id = entity.{{ if $.PrimaryKey }}{{ $.PrimaryKey.Name | pascalcase }}{{ else }}Id{{ end }} }, dto);
     }
+{{- else if eq .Operation "update" }}
 
     /// <summary>
     /// Update an existing {{ $entity | lowercase }}
     /// </summary>
-{{- template "authOrAuthorize" (dict "Roles" (and $perms $perms.Update) "PermsDefined" (ne $perms nil) "Entity" $entity "Op" "Update") }}
+{{- template "authOrAuthorize" (dict "Plan" .Auth "Entity" $entity "Op" .AuthPolicy) }}
     [HttpPut("{id}")]
     [ProducesResponseType(typeof({{ $entity }}Dto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -183,25 +219,27 @@ public class {{ pluralize $entity }}Controller : ControllerBase
             _logger.LogWarning("{{ $entity }} with ID {id} not found for update", id);
             return NotFound();
         }
-{{- if and $perms $perms.Update (hasOwnershipToken $perms.Update) }}
+{{- if .Auth }}
+{{- if .Auth.HasOwner }}
         // @Owner check: forbid unless the caller is the owner or holds an explicit role.
-        if ({{ template "ownerCheck" (dict "Roles" $perms.Update "Var" "existingEntity") }})
+        if ({{ template "ownerCheck" (dict "Plan" .Auth "Var" "existingEntity") }})
         {
             return Forbid();
         }
 {{- end }}
+{{- end }}
         MapUpdateRequestToEntity(request, existingEntity);
 
-{{- if .HasOptimisticLock }}
+{{- if .Concurrency }}
         // Optimistic-lock precondition: the client must send the version it last read.
         // If it doesn't match what is currently stored, another request already updated
         // the record — reject with 409 (conflict) without touching the data.
         if (request.Version.HasValue && request.Version.Value != existingEntity.Version)
         {
-            return Conflict(new { message = "Concurrency conflict: the resource was modified by another request" });
+            return Conflict(new { code = "CONCURRENCY_CONFLICT", message = "Concurrency conflict: the resource was modified by another request" });
         }
 {{- end }}
-{{- if .HasAuditLog }}
+{{- if $.HasAuditLog }}
         existingEntity.UpdatedBy = GetCurrentUserId();
 {{- end }}
 
@@ -214,12 +252,13 @@ public class {{ pluralize $entity }}Controller : ControllerBase
         var dto = MapToDto(updated);
         return Ok(dto);
     }
+{{- else if eq .Operation "patch" }}
 
     /// <summary>
     /// Partially update a {{ $entity | lowercase }} — only the scalar fields present
     /// in the JSON body are applied (System.Text.Json merge patch; no JSON Patch SDK).
     /// </summary>
-{{- template "authOrAuthorize" (dict "Roles" (and $perms $perms.Update) "PermsDefined" (ne $perms nil) "Entity" $entity "Op" "Update") }}
+{{- template "authOrAuthorize" (dict "Plan" .Auth "Entity" $entity "Op" .AuthPolicy) }}
     [HttpPatch("{id}")]
     [ProducesResponseType(typeof({{ $entity }}Dto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -233,12 +272,14 @@ public class {{ pluralize $entity }}Controller : ControllerBase
             _logger.LogWarning("{{ $entity }} with ID {id} not found for patch", id);
             return NotFound();
         }
-{{- if and $perms $perms.Update (hasOwnershipToken $perms.Update) }}
+{{- if .Auth }}
+{{- if .Auth.HasOwner }}
         // @Owner check: forbid unless the caller is the owner or holds an explicit role.
-        if ({{ template "ownerCheck" (dict "Roles" $perms.Update "Var" "existingEntity") }})
+        if ({{ template "ownerCheck" (dict "Plan" .Auth "Var" "existingEntity") }})
         {
             return Forbid();
         }
+{{- end }}
 {{- end }}
         try
         {
@@ -247,9 +288,9 @@ public class {{ pluralize $entity }}Controller : ControllerBase
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Invalid patch applied to {{ $entity }} {id}", id);
-            return BadRequest(new { message = "Invalid patch document" });
+            return BadRequest(new { code = "INVALID_PATCH", message = "Invalid patch document" });
         }
-{{- if .HasOptimisticLock }}
+{{- if .Concurrency }}
         // Optimistic-lock precondition: a merge patch may carry a version token; if it
         // does not match the stored row, another request already committed — reject 409.
         if (patch.TryGetProperty("version", out var versionEl))
@@ -257,11 +298,11 @@ public class {{ pluralize $entity }}Controller : ControllerBase
             var clientVersion = versionEl.GetInt32();
             if (clientVersion != existingEntity.Version)
             {
-                return Conflict(new { message = "Concurrency conflict: the resource was modified by another request" });
+                return Conflict(new { code = "CONCURRENCY_CONFLICT", message = "Concurrency conflict: the resource was modified by another request" });
             }
         }
 {{- end }}
-{{- if .HasAuditLog }}
+{{- if $.HasAuditLog }}
         existingEntity.UpdatedBy = GetCurrentUserId();
 {{- end }}
         // Partial (merge-patch) update: the entity is already change-tracked here, so
@@ -274,11 +315,12 @@ public class {{ pluralize $entity }}Controller : ControllerBase
         }
         return Ok(MapToDto(updated));
     }
+{{- else if eq .Operation "delete" }}
 
     /// <summary>
     /// Delete a {{ $entity | lowercase }}
     /// </summary>
-{{- template "authOrAuthorize" (dict "Roles" (and $perms $perms.Delete) "PermsDefined" (ne $perms nil) "Entity" $entity "Op" "Delete") }}
+{{- template "authOrAuthorize" (dict "Plan" .Auth "Entity" $entity "Op" .AuthPolicy) }}
     [HttpDelete("{id}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -291,12 +333,14 @@ public class {{ pluralize $entity }}Controller : ControllerBase
             _logger.LogWarning("{{ $entity }} with ID {id} not found for deletion", id);
             return NotFound();
         }
-{{- if and $perms $perms.Delete (hasOwnershipToken $perms.Delete) }}
+{{- if .Auth }}
+{{- if .Auth.HasOwner }}
         // @Owner check: forbid unless the caller is the owner or holds an explicit role.
-        if ({{ template "ownerCheck" (dict "Roles" $perms.Delete "Var" "entity") }})
+        if ({{ template "ownerCheck" (dict "Plan" .Auth "Var" "entity") }})
         {
             return Forbid();
         }
+{{- end }}
 {{- end }}
         var deleted = await _service.DeleteAsync(id);
         if (!deleted)
@@ -308,42 +352,26 @@ public class {{ pluralize $entity }}Controller : ControllerBase
         _logger.LogInformation("{{ $entity }} with ID {id} deleted successfully", id);
         return NoContent();
     }
+{{- end }}
+{{- end }}
 
 // ===================== DTOs =====================
 
     public class {{ $entity }}Dto
     {
-{{- range .Entity.Fields }}
-{{- if or (isFeatureField .Name) (eq (lower .Name) "password") }}
-{{- else if .IsPrimary }}
+{{- range .ReadFields }}
+{{- if .IsPrimary }}
         public {{ languageType .DatabaseType .IsNullable }} {{ .Name | pascalcase }} { get; set; }
 {{- else }}
 {{- template "dtoFieldProperties" . }}
 {{- end }}
 {{- end }}
-{{- if .HasAudit }}
-        public DateTime CreatedAt { get; set; }
-        public DateTime UpdatedAt { get; set; }
-{{- end }}
-{{- if .HasAuditLog }}
-        public Guid CreatedBy { get; set; }
-        public Guid UpdatedBy { get; set; }
-{{- end }}
-{{- if .HasSoftDelete }}
-        public DateTime? DeletedAt { get; set; }
-{{- end }}
-{{- if .HasOptimisticLock }}
-        public int Version { get; set; }
-{{- end }}
     }
 
     public class Create{{ $entity }}Request
     {
-{{- range .Entity.Fields }}
-{{- if or (isFeatureField .Name) (eq (lower .Name) "password") (.IsReadonly) }}
-{{- else if not .IsPrimary }}
+{{- range .CreateFields }}
 {{- template "requestFieldProperties" . }}
-{{- end }}
 {{- end }}
 {{- if $isAuth }}
         [Required]
@@ -354,19 +382,17 @@ public class {{ pluralize $entity }}Controller : ControllerBase
 
     public class Update{{ $entity }}Request
     {
-{{- range .Entity.Fields }}
-{{- if or (isFeatureField .Name) (eq (lower .Name) "password") (.IsReadonly) }}
-{{- else if not .IsPrimary }}
+{{- range .UpdateFields }}
+{{- if .IsConcurrencyToken }}
+        [JsonPropertyName("version")]
+        public int? Version { get; set; }
+{{- else }}
 {{- template "requestFieldProperties" . }}
 {{- end }}
 {{- end }}
 {{- if $isAuth }}
         [JsonPropertyName("password")]
         public string? Password { get; set; }
-{{- end }}
-{{- if .HasOptimisticLock }}
-        [JsonPropertyName("version")]
-        public int? Version { get; set; }
 {{- end }}
     }
 
@@ -376,38 +402,20 @@ public class {{ pluralize $entity }}Controller : ControllerBase
     {
         return new {{ $entity }}Dto
         {
-{{- range .Entity.Fields }}
-{{- if or (isFeatureField .Name) (eq (lower .Name) "password") }}
-{{- else if .IsPrimary }}
+{{- range .ReadFields }}
+{{- if .IsPrimary }}
             {{ .Name | pascalcase }} = entity.{{ .Name | pascalcase }},
 {{- else }}
 {{- template "mapFieldToDto" . }}
 {{- end }}
-{{- end }}
-{{- if .HasAudit }}
-            CreatedAt = entity.CreatedAt,
-            UpdatedAt = entity.UpdatedAt,
-{{- end }}
-{{- if .HasAuditLog }}
-            CreatedBy = entity.CreatedBy,
-            UpdatedBy = entity.UpdatedBy,
-{{- end }}
-{{- if .HasSoftDelete }}
-            DeletedAt = entity.DeletedAt,
-{{- end }}
-{{- if .HasOptimisticLock }}
-            Version = entity.Version,
 {{- end }}
         };
     }
 
     private void MapCreateRequestToEntity(Create{{ $entity }}Request request, {{ $entity }} entity)
     {
-{{- range .Entity.Fields }}
-{{- if or (isFeatureField .Name) (eq (lower .Name) "password") (.IsReadonly) }}
-{{- else if not .IsPrimary }}
+{{- range .CreateFields }}
 {{- template "mapRequestToEntity" . }}
-{{- end }}
 {{- end }}
 {{- if $isAuth }}
         entity.Password = _passwordHasher.HashPassword(request.Password);
@@ -416,9 +424,8 @@ public class {{ pluralize $entity }}Controller : ControllerBase
 
     private void MapUpdateRequestToEntity(Update{{ $entity }}Request request, {{ $entity }} entity)
     {
-{{- range .Entity.Fields }}
-{{- if or (isFeatureField .Name) (eq (lower .Name) "password") (.IsReadonly) }}
-{{- else if not .IsPrimary }}
+{{- range .UpdateFields }}
+{{- if not .IsConcurrencyToken }}
 {{- template "mapRequestToEntity" . }}
 {{- end }}
 {{- end }}
@@ -432,8 +439,8 @@ public class {{ pluralize $entity }}Controller : ControllerBase
 
     /// <summary>
     /// Merge-patch via System.Text.Json: each scalar field present in the patch
-    /// body is deserialized and assigned. Ids, relations, arrays, enums and JSON
-    /// blobs are intentionally ignored (they are not meant for partial updates).
+    /// body is deserialized and assigned. Ids, collections, enums and JSON blobs
+    /// are intentionally ignored — the CORE's IsPatchable decides eligibility.
     /// </summary>
     private void ApplyPatch(JsonElement patch, {{ $entity }} entity)
     {
@@ -442,24 +449,18 @@ public class {{ pluralize $entity }}Controller : ControllerBase
             throw new ArgumentException("Patch body must be a JSON object", nameof(patch));
         }
 {{- range .Entity.Fields }}
-{{- if or (isFeatureField .Name) (eq (lower .Name) "password") (.IsReadonly) }}
-{{- else if .IsPrimary }}
-{{- else if .IsRelation }}
-{{- if not .IsMany }}
+{{- if .IsPatchable }}
+{{- if .IsRelation }}
         if (patch.TryGetProperty("{{ .Name | camelcase }}", out var {{ .Name | camelcase }}El))
         {
             entity.{{ fkName .Name | pascalcase }} = {{ .Name | camelcase }}El.Deserialize<{{ languageType .DatabaseType .IsNullable }}>();
         }
-{{- end }}
-{{- else if .IsArray }}
-{{- else if (isEnumType .DatabaseType) }}
-{{- else if eq .DatabaseType "json" }}
-{{- else if eq .DatabaseType "jsonb" }}
 {{- else }}
         if (patch.TryGetProperty("{{ .Name | camelcase }}", out var {{ .Name | camelcase }}El))
         {
             entity.{{ .Name | pascalcase }} = {{ .Name | camelcase }}El.Deserialize<{{ languageType .DatabaseType .IsNullable }}>();
         }
+{{- end }}
 {{- end }}
 {{- end }}
     }

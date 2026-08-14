@@ -1,20 +1,19 @@
 {{- $proj := .Project.Name | pascalcase }}
 {{- $auth := .Project.Auth.Entity }}
+{{- $authEntity := .Project.AuthEntity }}
 {{- $authPk := "Id" }}
 {{- $authPkType := "Guid" }}
 {{- $roleProp := "" }}
-{{- $roleDbType := "" }}
+
 {{- $firstRole := "" }}
 {{- range .Project.Auth.Roles }}
 {{- if eq (lower .) "admin" }}{{ $firstRole = . }}{{ end }}
 {{- end }}
 {{- if not $firstRole }}{{ $firstRole = (index .Project.Auth.Roles 0) | pascalcase }}{{ end }}
-{{- range .Project.Entities }}
-{{- if eq .Name $auth }}
-{{- range .Fields }}
-{{- if .IsPrimary }}{{ $authPk = .Name | pascalcase }}{{ $authPkType = languageType .DatabaseType false }}{{ end }}
-{{- if and (not .IsPrimary) (not .IsRelation) (eq (.Name | lower) "role") }}{{ $roleProp = .Name | pascalcase }}{{ $roleDbType = .DatabaseType }}{{ end }}
-{{- end }}
+{{- if $authEntity }}
+{{- if $authEntity.PrimaryKey }}{{ $authPk = $authEntity.PrimaryKey.Name | pascalcase }}{{ $authPkType = languageType $authEntity.PrimaryKey.DatabaseType false }}{{ end }}
+{{- range $authEntity.Fields }}
+{{- if and (not .IsPrimary) (not .IsRelation) (eq (.Name | lower) "role") }}{{ $roleProp = .Name | pascalcase }}{{ end }}
 {{- end }}
 {{- end }}
 using {{ $proj }}.Application.Repositories;
@@ -82,7 +81,7 @@ public partial class AuthService : IAuthService
 {{- range .Project.Entities }}
 {{- if eq .Name $auth }}
 {{- range .Fields }}
-            {{- if and (not .IsPrimary) (not .IsRelation) (not (isFeatureField .Name)) (not (eq (.Name | lower) "email")) (not (eq (.Name | lower) "password")) }}
+            {{- if and (not .IsPrimary) (not .IsRelation) (not (.IsFeatureField)) (not (eq (.Name | lower) "email")) (not (eq (.Name | lower) "password")) }}
             {{- if or .DefaultValue (not .IsNullable) }}
             {{ .Name | pascalcase }} = {{ template "defaultValueExpression" . }},
             {{- end }}
@@ -128,9 +127,9 @@ public partial class AuthService : IAuthService
 {{- range .Project.Entities }}
 {{- if eq .Name $auth }}
 {{- range .Fields }}
-            {{- if and (not .IsPrimary) (not .IsRelation) (not (isFeatureField .Name)) (not (eq (.Name | lower) "email")) (not (eq (.Name | lower) "password")) }}
+            {{- if and (not .IsPrimary) (not .IsRelation) (not (.IsFeatureField)) (not (eq (.Name | lower) "email")) (not (eq (.Name | lower) "password")) }}
             {{- if eq (.Name | lower) "role" }}
-            {{ .Name | pascalcase }} = {{ if isEnumType $roleDbType }}{{ enumTypeName $roleDbType }}.{{ $firstRole }}{{ else }}"{{ $firstRole }}"{{ end }},
+            {{ .Name | pascalcase }} = {{ if .IsEnum }}{{ .EnumTypeName }}.{{ $firstRole }}{{ else }}"{{ $firstRole }}"{{ end }},
             {{- else if or .DefaultValue (not .IsNullable) }}
             {{ .Name | pascalcase }} = {{ template "defaultValueExpression" . }},
             {{- end }}

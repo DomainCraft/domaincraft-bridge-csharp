@@ -32,23 +32,22 @@ public partial class ApiTests
 {{- $deletePublic := true }}
 {{- if .Permissions }}
 {{- if .Permissions.Read }}
-{{- $readPublic = isPublicPermission .Permissions.Read }}
+{{- $readPublic = .Permissions.IsPublic "read" }}
 {{- end }}
 {{- if .Permissions.Create }}
-{{- $createPublic = isPublicPermission .Permissions.Create }}
+{{- $createPublic = .Permissions.IsPublic "create" }}
 {{- end }}
 {{- if .Permissions.Update }}
-{{- $updatePublic = isPublicPermission .Permissions.Update }}
+{{- $updatePublic = .Permissions.IsPublic "update" }}
 {{- end }}
 {{- if .Permissions.Delete }}
-{{- $deletePublic = isPublicPermission .Permissions.Delete }}
+{{- $deletePublic = .Permissions.IsPublic "delete" }}
 {{- end }}
 {{- end }}
 {{- $nfId := "00000000-0000-0000-0000-000000000000" }}
 {{- range .Fields }}
 {{- if .IsPrimary }}
-{{- if eq .DatabaseType "int" }}{{ $nfId = "999999" }}{{ end }}
-{{- if eq .DatabaseType "bigint" }}{{ $nfId = "999999" }}{{ end }}
+{{- if .IsInteger }}{{ $nfId = "999999" }}{{ end }}
 {{- end }}
 {{- end }}
 {{- /* Public create on an entity with a unique scalar/FK column: the fixed test body

@@ -3,7 +3,7 @@
 
 ## Overview
 - **Plural Name:** {{ .Entity.NamePlural }}
-- **Table Name:** `{{ .Entity.NamePlural | snakecase }}`
+- **Table Name:** `{{ .Entity.TableName }}`
 - **Features:** {{ if .HasAudit }}Audit, {{ end }}{{ if .HasSoftDelete }}Soft Delete, {{ end }}{{ if .HasOptimisticLock }}Optimistic Lock{{ end }}
 
 ## Fields

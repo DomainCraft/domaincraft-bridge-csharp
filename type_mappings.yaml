@@ -58,3 +58,31 @@ nullable_format: "?"
 
 # How the bridge handles enum types (stored as raw names in IR)
 enum_nullable: true
+
+# Literal syntax: how to write a value/default literal of each IR type in C#.
+# Keys match IR database types (consistent with `types:` above); "enum" is a
+# reserved key for user-declared enums. %s placeholders are filled by the core's
+# literalValue / literalDefault / literalMember bridge functions.
+literals:
+  string:   { default: '""' }
+  text:     { default: '""' }
+  int:      { default: "0" }
+  bigint:   { suffix: "L",  default: "0L" }
+  float:    { default: "0.0" }
+  decimal:  { suffix: "m",  default: "0m" }
+  boolean:  { default: "false" }
+  uuid:     { parse: "Guid.Parse(%s)",              default: "Guid.NewGuid()" }
+  date:     { parse: "DateTime.Parse(%s)",          default: "DateTime.UtcNow" }
+  datetime: { parse: "DateTime.Parse(%s)",          default: "DateTime.UtcNow" }
+  json:     { parse: "JsonDocument.Parse(%s, default)", default: 'JsonDocument.Parse("{}")' }
+  jsonb:    { parse: "JsonDocument.Parse(%s, default)", default: 'JsonDocument.Parse("{}")' }
+  enum:
+    parse:  "Enum.Parse<%s>(%s)"
+    member: "%s.%s"
+    zero:   "(%s)0"
+
+# Array literal syntax: %s is the bridge's array type (e.g. "List<int>").
+array:
+  open:  "new %s { "
+  close: " }"
+  empty: "new %s()"

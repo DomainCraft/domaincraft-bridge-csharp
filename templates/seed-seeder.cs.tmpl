@@ -22,6 +22,9 @@ namespace {{ .Project.Name | pascalcase }}.Infrastructure.Persistence.Seeders;
 
 /// <summary>
 /// Database seeder that applies seed data into the database.
+/// The CORE normalizes the developer's explicit `seed:` rows into typed
+/// SeedRecord/SeedValue records (types, relations and constraints already
+/// resolved), so this bridge only serializes them into C# object initializers.
 /// seedValueExpression is defined in _helpers.cs.tmpl (loaded via bridge.yaml helpers).
 /// Password-typed seed fields are hashed through IPasswordHasher so a plaintext value in
 /// domain.yaml never lands in the database; pre-hashed (bcrypt, "$2...") values pass through.
@@ -63,10 +66,8 @@ public class DomainSeeder
         for (var pass = 0; pass < maxPasses; pass++)
         {
             var progress = false;
-{{- range .Project.Entities }}
-{{- if .Seed }}
+{{- range .SeedData.Entities }}
             progress |= await Seed{{ .Name }}Async();
-{{- end }}
 {{- end }}
             if (!progress) break;
         }
@@ -74,8 +75,7 @@ public class DomainSeeder
         _logger.LogInformation("Database seeding completed");
     }
 
-{{- range .Project.Entities }}
-{{- if .Seed }}
+{{- range .SeedData.Entities }}
 {{- $entity := . }}
 
     /// <summary>
@@ -86,7 +86,7 @@ public class DomainSeeder
     {
         try
         {
-            if (await _context.{{ .NamePlural }}.AnyAsync())
+            if (await _context.{{ pluralize .Name }}.AnyAsync())
             {
                 return true;
             }
@@ -95,24 +95,23 @@ public class DomainSeeder
 
             var entities = new List<{{ .Name }}>
             {
-{{- range .Seed }}
+{{- range .Records }}
                 new {{ $entity.Name }}
                 {
-{{- range $k, $v := . }}
-{{- $field := lookupField $k $entity }}
-{{- if $field }}
-{{- $target := $k | pascalcase -}}
-{{- if $field.IsRelation }}{{ $target = fkName $k | pascalcase }}{{ end }}
-                    {{ $target }} = {{ template "seedValueExpression" (dict "Field" $field "Value" $v "HasAuth" $hasAuth) }},
+{{- range .Fields }}
+{{- if .IsRelation }}
+{{- if not .IsMany }}
+                    {{ fkName .Field | pascalcase }} = {{ template "seedValueExpression" (dict "Kind" .Kind "DBType" .DBType "ElementType" .ElementType "Value" .Value "Field" .Field "HasAuth" $hasAuth) }},
+{{- end }}
 {{- else }}
-                    {{ $k | pascalcase }} = {{ jsonValue $v }},
+                    {{ .Field | pascalcase }} = {{ template "seedValueExpression" (dict "Kind" .Kind "DBType" .DBType "ElementType" .ElementType "Value" .Value "Field" .Field "HasAuth" $hasAuth) }},
 {{- end }}
 {{- end }}
                 },
 {{- end }}
             };
 
-            await _context.{{ .NamePlural }}.AddRangeAsync(entities);
+            await _context.{{ pluralize .Name }}.AddRangeAsync(entities);
             await _context.SaveChangesAsync();
 
             _logger.LogInformation("Seeded {Count} {{ pluralize .Name | lowercase }}", entities.Count);
@@ -124,6 +123,5 @@ public class DomainSeeder
             return false;
         }
     }
-{{- end }}
 {{- end }}
 }

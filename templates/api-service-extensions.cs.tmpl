@@ -187,33 +187,22 @@ public static class ServiceCollectionExtensions
         {
 {{- range $op := list "Read" "Create" "Update" "Delete" }}
 {{- range $.Project.Entities }}
-{{- $perms := .Permissions }}
-{{- if $perms }}
-{{- $roles := "" -}}
-{{- if eq $op "Read" }}{{ $roles = $perms.Read }}{{ end -}}
-{{- if eq $op "Create" }}{{ $roles = $perms.Create }}{{ end -}}
-{{- if eq $op "Update" }}{{ $roles = $perms.Update }}{{ end -}}
-{{- if eq $op "Delete" }}{{ $roles = $perms.Delete }}{{ end -}}
-{{- if and $roles (not (isPublicPermission $roles)) }}
+{{- $plan := .PermissionPlan ($op | lower) }}
+{{- if and $plan (not $plan.IsPublic) (or $plan.HasOwner (gt (len $plan.Roles) 0)) }}
 {{- /* Role lists are OR (any role passes), and "@Owner" is validated in the
-       controller via IPermissionService (owner OR explicit role). Building the
-       policy with multiple policy.RequireRole(...) calls would mean AND, so we
+       controller via IPermissionService (owner OR explicit role). The CORE
+       already decomposed the roles into the plan (IsPublic / HasOwner / Roles).
+       Building the policy with multiple RequireRole calls would mean AND, so we
        emit a single RequireAssertion that ORs the explicit roles instead. */ -}}
-{{- $hasOwner := false }}
-{{- $explicit := list }}
-{{- range $roles }}
-{{- if hasPrefix "@" . }}{{ $hasOwner = true }}{{- else if ne . "*" }}{{ $explicit = append $explicit . }}{{- end }}
-{{- end }}
             options.AddPolicy("{{ .Name }}{{ $op }}", policy =>
             {
                 policy.RequireAuthenticatedUser();
-{{- if $hasOwner }}
+{{- if $plan.HasOwner }}
                 // @Owner and role checks are enforced in the controller (owner OR explicit role).
-{{- else if gt (len $explicit) 0 }}
-                policy.RequireAssertion(context =>{{ range $i, $r := $explicit }}{{ if $i }} ||{{ end }} context.User.IsInRole("{{ $r }}"){{ end }});
+{{- else }}
+                policy.RequireAssertion(context =>{{ range $i, $r := $plan.Roles }}{{ if $i }} ||{{ end }} context.User.IsInRole("{{ $r }}"){{ end }});
 {{- end }}
             });
-{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

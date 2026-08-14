@@ -8,6 +8,7 @@
  */
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using {{ .Project.Name | pascalcase }}.Application.Services;
 using {{ .Project.Name | pascalcase }}.Infrastructure.Persistence;
 {{- if $hasSeed }}
@@ -71,9 +72,22 @@ public static class ApplicationBuilderExtensions
 
         app.UseOutputCache();
 
+        // Unique-constraint names are core-owned (IRIndex.DatabaseName()). Build a
+        // map from the PostgreSQL constraint name to the field that must be unique,
+        // so a unique violation is reported as a stable, field-specific 409 instead
+        // of a bare 500 (see spec/errors.md → UNIQUE_CONFLICT).
+        var uniqueFields = new Dictionary<string, string>();
+{{- range .Project.Entities }}
+{{- range .AllIndexes }}
+{{- if and .Unique (eq (len .Fields) 1) }}
+        uniqueFields["{{ .DatabaseName }}"] = "{{ index .Fields 0 }}";
+{{- end }}
+{{- end }}
+{{- end }}
+
         // Map data-layer exceptions to meaningful HTTP status codes instead of a bare 500:
         //   DbUpdateConcurrencyException — an optimistic-lock version conflict (409),
-        //   DbUpdateException           — a FK/unique/constraint violation (409).
+        //   DbUpdateException           — a FK (23503) / unique (23505) / other constraint violation (409).
         //   HookException               — a business hook returned HookResult.Fail(...) (400).
         app.Use(async (context, next) =>
         {
@@ -84,17 +98,35 @@ public static class ApplicationBuilderExtensions
             catch (HookException ex)
             {
                 context.Response.StatusCode = StatusCodes.Status400BadRequest;
-                await context.Response.WriteAsJsonAsync(new { message = ex.Message });
+                await context.Response.WriteAsJsonAsync(new { code = "HOOK_REJECTED", message = ex.Message });
             }
             catch (DbUpdateConcurrencyException)
             {
                 context.Response.StatusCode = StatusCodes.Status409Conflict;
-                await context.Response.WriteAsJsonAsync(new { message = "Concurrency conflict: the resource was modified by another request" });
+                await context.Response.WriteAsJsonAsync(new { code = "CONCURRENCY_CONFLICT", message = "Concurrency conflict: the resource was modified by another request" });
             }
             catch (DbUpdateException ex)
             {
+                var code = "CONSTRAINT_CONFLICT";
+                var message = "A database constraint was violated";
+                if (ex.InnerException is PostgresException pg)
+                {
+                    switch (pg.SqlState)
+                    {
+                        case "23505":
+                            code = "UNIQUE_CONFLICT";
+                            message = uniqueFields.TryGetValue(pg.ConstraintName ?? "", out var field)
+                                ? $"{field} must be unique"
+                                : "A value violates a unique constraint";
+                            break;
+                        case "23503":
+                            code = "FOREIGN_KEY_CONFLICT";
+                            message = "The operation references a record that does not exist";
+                            break;
+                    }
+                }
                 context.Response.StatusCode = StatusCodes.Status409Conflict;
-                await context.Response.WriteAsJsonAsync(new { message = "A database constraint was violated", detail = ex.Message });
+                await context.Response.WriteAsJsonAsync(new { code, message });
             }
         });
 

@@ -39,7 +39,7 @@ public class OwnerResolver : IOwnerResolver
 {{- range .Fields }}{{- if .IsPrimary }}{{ $ownerFields = append $ownerFields (.Name | pascalcase) }}{{- end }}{{- end }}
 {{- end }}
 {{- range .Fields }}
-{{- if and .IsRelation (not .IsMany) (not (isFeatureField .Name)) }}
+{{- if and .IsRelation (not .IsMany) (not (.IsFeatureField)) }}
 {{- if eq .RelationTarget $authEntity }}
 {{- $ownerFields = append $ownerFields (fkName .Name | pascalcase) }}
 {{- end }}

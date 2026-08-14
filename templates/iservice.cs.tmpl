@@ -7,6 +7,7 @@
 {{- $proj := .Project.Name | pascalcase }}
 using {{ $proj }}.Domain.Entities;
 using {{ $proj }}.Domain.Shared;
+using {{ $proj }}.Application.Query;
 
 namespace {{ $proj }}.Application.Services;
 
@@ -20,8 +21,8 @@ public interface I{{ .Entity.Name }}Service
     /// <summary>Get all {{ .Entity.NamePlural | lowercase }}</summary>
     Task<List<{{ .Entity.Name }}>> GetAllAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>Get a page of {{ .Entity.NamePlural | lowercase }}, optionally sorted and searched</summary>
-    Task<PagedResult<{{ .Entity.Name }}>> GetPagedAsync(int page, int pageSize, string? sort = null, string? search = null, CancellationToken cancellationToken = default);
+    /// <summary>Get a page of {{ .Entity.NamePlural | lowercase }}, optionally sorted, searched and filtered</summary>
+    Task<PagedResult<{{ .Entity.Name }}>> GetPagedAsync(ListQuery query, CancellationToken cancellationToken = default);
 
     /// <summary>Get a {{ .Entity.Name | lowercase }} by ID</summary>
     Task<{{ .Entity.Name }}?> GetByIdAsync(object id, CancellationToken cancellationToken = default);

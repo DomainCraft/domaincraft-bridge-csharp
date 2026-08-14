@@ -16,6 +16,12 @@ public class PagedResult<T>
     public int TotalCount { get; set; }
     public int Page { get; set; }
     public int PageSize { get; set; }
+    /// <summary>
+    /// Keyset cursor: the primary key of the last item in this page, or null when
+    /// there are no further rows (cursor pagination only). Offset mode leaves it
+    /// null and clients use <see cref="HasNextPage"/> instead.
+    /// </summary>
+    public string? NextCursor { get; set; }
     public int TotalPages => PageSize > 0 ? (int)Math.Ceiling((double)TotalCount / PageSize) : 0;
     public bool HasNextPage => Page * PageSize < TotalCount;
     public bool HasPreviousPage => Page > 1;

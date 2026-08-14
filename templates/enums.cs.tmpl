@@ -9,16 +9,16 @@ using System.Runtime.Serialization;
 namespace {{ .Project.Name | pascalcase }}.Domain.Shared;
 
 {{- range $enumName := $.Project.EnumOrder }}
-{{- $enumValues := index $.Project.Enums $enumName }}
+{{- $enumValues := $.Project.EnumValues $enumName }}
 /// <summary>
 /// Enum: {{ $enumName }}
 /// </summary>
 public enum {{ $enumName | pascalcase }}
 {
-{{- range $idx, $enumValue := $enumValues }}
-    /// <summary>{{ $enumValue }}</summary>
-    [EnumMember(Value = "{{ $enumValue | snakecase }}")]
-    {{ $enumValue | pascalcase }} = {{ $idx }},
+{{- range $enumValues }}
+    /// <summary>{{ .Name }}</summary>
+    [EnumMember(Value = "{{ .WireValue }}")]
+    {{ .Name | pascalcase }} = {{ .Ordinal }},
 {{- end }}
 }
 

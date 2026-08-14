@@ -2,40 +2,40 @@
 
 {{- /* seedValueExpression converts a seed data value to a C# expression.
      Context: dict with "Field" (IRField-like) and "Value" (the seed value).
-     Used by both seed-seeder.cs.tmpl and controller.cs.tmpl Seed action. */ -}}
+     Used by both seed-seeder.cs.tmpl and controller.cs.tmpl Seed action.
+     The literal syntax is loaded from type_mappings.yaml; this template only
+     decides the password-hash special case and the array recursion. */ -}}
 {{- define "seedValueExpression" -}}
-{{- $field := .Field -}}
+{{- $kind := .Kind -}}
+{{- $dbType := .DBType -}}
 {{- $value := .Value -}}
-{{- if not $field -}}
-{{- jsonValue $value -}}
-{{- else -}}
-{{- $csType := languageType $field.DatabaseType false -}}
-{{- if hasPrefix $csType "List<" -}}
-{{- $innerType := trimSuffix ">" (trimPrefix "List<" $csType) -}}
+{{- $field := .Field -}}
+{{- if eq $kind "array" -}}
+{{- $inner := .ElementType -}}
 {{- if kindIs "slice" $value -}}
-new List<{{ $innerType }}> { {{- range $index, $item := $value -}}{{- if $index }}, {{ end -}}{{ template "seedValueExpression" (dict "Field" (dict "DatabaseType" $innerType) "Value" $item) }}{{- end -}} }
+{{ arrayLiteralOpen $dbType }} {{- range $index, $item := $value -}}{{- if $index }}, {{ end -}}{{ template "seedValueExpression" (dict "Kind" (seedKind $inner) "DBType" $inner "ElementType" $inner "Value" $item "Field" $field) }}{{- end -}}{{ arrayLiteralClose }}
 {{- else -}}
-new List<{{ $innerType }}>()
+{{ literalDefault $dbType }}
 {{- end -}}
-{{- else if eq $csType "Guid" -}}
-Guid.Parse({{ jsonValue $value }})
-{{- else if eq $csType "DateTime" -}}
-DateTime.Parse({{ jsonValue $value }})
-{{- else if eq $csType "JsonDocument" -}}
-JsonDocument.Parse({{ jsonValue $value }}, default)
-{{- else if eq $csType "decimal" -}}
-{{ rawSeedValue $value $field.DatabaseType }}m
-{{- else if or (eq $csType "int") (eq $csType "long") (eq $csType "double") (eq $csType "bool") -}}
-{{ rawSeedValue $value $field.DatabaseType }}
-{{- else if eq $csType "string" -}}
-{{- if and .HasAuth $field.Name (eq (lower $field.Name) "password") (not (hasPrefix "$2" (toString $value))) -}}
-_passwordHasher.HashPassword({{ jsonValue $value }})
+{{- else if eq $kind "text" -}}
+{{- if and .HasAuth $field (eq (lower $field) "password") (not (hasPrefix "$2" (toString $value))) -}}
+_passwordHasher.HashPassword({{ literalValue $dbType $value }})
 {{- else -}}
-{{ jsonValue $value }}
+{{ literalValue $dbType $value }}
 {{- end -}}
 {{- else -}}
-Enum.Parse<{{ $csType }}>({{ $value | pascalcase | jsonValue }})
+{{ literalValue $dbType $value }}
 {{- end -}}
+{{- end -}}
+
+{{- /* defaultValueLiteral emits the expression for a field's explicit
+     .DefaultValue (from domain.yaml), via the bridge's literal mapping loaded
+     from type_mappings.yaml. Shared by defaultValueExpression and the entity
+     property initializer. */ -}}
+{{- define "defaultValueLiteral" -}}
+{{- if .DefaultIsFunc -}}{{ literalDefault .DatabaseType }}
+{{- else if .IsEnum -}}{{ literalMember .DatabaseType .DefaultValue }}
+{{- else -}}{{ literalValue .DatabaseType .DefaultValue }}
 {{- end -}}
 {{- end -}}
 
@@ -43,123 +43,98 @@ Enum.Parse<{{ $csType }}>({{ $value | pascalcase | jsonValue }})
      Uses .DefaultValue from YAML when available, falls back to type-based defaults.
      Context: IRField-like dict with .DatabaseType, .DefaultValue, .DefaultIsFunc. */ -}}
 {{- define "defaultValueExpression" -}}
-{{- $csType := languageType .DatabaseType false -}}
-{{- if .DefaultValue -}}
-{{- if .DefaultIsFunc -}}
-{{- if eq $csType "DateTime" -}}DateTime.UtcNow
-{{- else -}}default({{ $csType }})
-{{- end -}}
-{{- else if eq $csType "string" -}}"{{ .DefaultValue }}"
-{{- else if or (eq $csType "int") (eq $csType "long") (eq $csType "double") (eq $csType "decimal") -}}{{ .DefaultValue }}
-{{- else if eq $csType "bool" -}}{{ .DefaultValue }}
-{{- else if eq $csType "Guid" -}}Guid.Parse("{{ .DefaultValue }}")
-{{- else if eq $csType "DateTime" -}}DateTime.Parse("{{ .DefaultValue }}")
-{{- else if eq $csType "JsonDocument" -}}JsonDocument.Parse("{{ .DefaultValue }}")
-{{- else -}}{{ $csType }}.{{ .DefaultValue }}
-{{- end -}}
-{{- else if hasPrefix "List<" $csType -}}new {{ $csType }}()
-{{- else if eq $csType "string" -}}""
-{{- else if eq $csType "int" -}}0
-{{- else if eq $csType "long" -}}0L
-{{- else if eq $csType "double" -}}0.0
-{{- else if eq $csType "decimal" -}}0m
-{{- else if eq $csType "bool" -}}false
-{{- else if eq $csType "Guid" -}}Guid.NewGuid()
-{{- else if eq $csType "DateTime" -}}DateTime.UtcNow
-{{- else if eq $csType "JsonDocument" -}}JsonDocument.Parse("{}")
-{{- else -}}default({{ $csType }})
+{{- if .DefaultValue -}}{{ template "defaultValueLiteral" . }}
+{{- else -}}{{ literalDefault .DatabaseType }}
 {{- end -}}
 {{- end -}}
 
-{{- /* authOrAuthorize emits auth attribute with fallback to [Authorize] when no perms defined.
-     Context: same as authAttribute. */ -}}
+{{- /* authOrAuthorize emits the auth attribute from the CORE-computed permission plan.
+     Context: dict with "Plan" (IRPermissionPlan or nil), "Entity", "Op".
+     The plan already decomposes the roles into IsPublic / HasOwner / Roles, so
+     this bridge no longer parses "*" wildcards or "@Owner" tokens. */ -}}
 {{- define "authOrAuthorize" -}}
-{{- $roles := .Roles -}}
+{{- $plan := .Plan -}}
 {{- $entity := .Entity -}}
 {{- $op := .Op -}}
-{{- $permsDefined := .PermsDefined -}}
-{{- if $roles -}}
-{{- if isPublicPermission $roles }}
+{{- if not $plan }}
     [AllowAnonymous]
+{{- else if $plan.IsPublic }}
+    [AllowAnonymous]
+{{- else if and (not $plan.HasOwner) (eq (len $plan.Roles) 0) }}
+{{- /* permissions declared but this operation has no roles/token → no attribute */ -}}
 {{- else }}
     [Authorize(Policy = "{{ $entity }}{{ $op }}")]
 {{- end }}
-{{- else if not $permsDefined }}
-    [AllowAnonymous]
-{{- end }}
 {{- end -}}
 
-{{- /* ownerCheck emits the boolean expression a guards an @Owner operation: forbid
-     unless the caller is the owner OR holds at least one explicit (non-@) role from
-     the operation's role list. Roles are data-driven — never hardcoded.
-     Context: dict with "Roles" ([]string) and "Var" (string, the entity expression). */ -}}
+{{- /* ownerCheck emits the boolean expression that guards an @Owner operation: forbid
+     unless the caller is the owner OR holds at least one explicit role from the
+     plan's Roles (the bypass roles are already extracted by the core).
+     Context: dict with "Plan" (IRPermissionPlan) and "Var" (the entity expression). */ -}}
 {{- define "ownerCheck" -}}
-{{- $roles := .Roles -}}
+{{- $plan := .Plan -}}
 {{- $var := .Var -}}
-{{- $bypass := list -}}
-{{- range $roles }}{{- if not (hasPrefix "@" .) }}{{ $bypass = append $bypass . }}{{ end }}{{- end -}}
-{{- if gt (len $bypass) 0 }}!_permissionService.HasAnyRole(new[] { {{- range $i, $r := $bypass }}{{ if $i }}, {{ end }}"{{ $r }}"{{- end }} }) && {{ end }}!_permissionService.IsOwner({{ $var }}){{- end -}}
+{{- if gt (len $plan.Roles) 0 }}!_permissionService.HasAnyRole(new[] { {{- range $i, $r := $plan.Roles }}{{ if $i }}, {{ end }}"{{ $r }}"{{- end }} }) && {{ end }}!_permissionService.IsOwner({{ $var }}){{- end -}}
 
-{{- /* validationAttributes emits [Required], [EmailAddress], [Url], [RegularExpression], [StringLength] attributes.
-     Context: IRField. */ -}}
+{{- /* validationAttributes emits C# validation attributes from the CORE's normalized
+     validation rules (IRField.ValidationRules()). The core has already classified
+     each rule (required / email / url / ipv4 / regex / min_length / max_length /
+     min_value / max_value) AND assigned a stable Code + default Message, so this
+     bridge only maps each rule to a DataAnnotations attribute — it neither
+     re-derives which modifier is a length vs a numeric bound, nor hardcodes the
+     message text. Context: IRField. */ -}}
 {{- define "validationAttributes" -}}
-{{- if and (not .IsNullable) (ne .DatabaseType "json") (ne .DatabaseType "jsonb") }}
-    [Required]
-{{- end }}
-{{- if and (eq .DatabaseType "string") (.HasValidation "email") }}
-    [EmailAddress(ErrorMessage = "Invalid email address")]
-{{- end }}
-{{- if and (eq .DatabaseType "string") (.HasValidation "url") }}
-    [Url(ErrorMessage = "Invalid URL")]
-{{- end }}
-{{- if and (eq .DatabaseType "string") (.HasValidation "regex") }}
-{{- $regex := .ValidationValue "regex" }}
-{{- if and $regex (ne $regex "^") }}
-    [RegularExpression("{{ $regex }}", ErrorMessage = "Invalid format")]
-{{- end }}
-{{- end }}
-{{- if and (eq .DatabaseType "string") (or (.HasValidation "min") (.HasValidation "max")) }}
-    [StringLength({{ if .HasValidation "max" }}{{ .ValidationValue "max" }}{{ else }}int.MaxValue{{ end }}, MinimumLength = {{ if .HasValidation "min" }}{{ .ValidationValue "min" }}{{ else }}0{{ end }})]
-{{- end }}
-{{- template "numericRangeAttribute" . }}
+{{- $field := . -}}
+{{- $rules := .ValidationRules -}}
+{{- $isRequired := false -}}{{- $isEmail := false -}}{{- $isUrl := false -}}
+{{- $minLen := "" -}}{{- $maxLen := "" -}}{{- $regex := "" -}}{{- $minVal := "" -}}{{- $maxVal := "" -}}
+{{- $reqMsg := "" -}}{{- $emailMsg := "" -}}{{- $urlMsg := "" -}}{{- $regexMsg := "" -}}{{- $minLenMsg := "" -}}{{- $maxLenMsg := "" -}}{{- $minValMsg := "" -}}{{- $maxValMsg := "" -}}
+{{- range $rules -}}
+{{- if eq .Kind "required" }}{{ $isRequired = true }}{{ $reqMsg = .Message }}{{ end -}}
+{{- if eq .Kind "email" }}{{ $isEmail = true }}{{ $emailMsg = .Message }}{{ end -}}
+{{- if eq .Kind "url" }}{{ $isUrl = true }}{{ $urlMsg = .Message }}{{ end -}}
+{{- if eq .Kind "min_length" }}{{ $minLen = .Value }}{{ $minLenMsg = .Message }}{{ end -}}
+{{- if eq .Kind "max_length" }}{{ $maxLen = .Value }}{{ $maxLenMsg = .Message }}{{ end -}}
+{{- if eq .Kind "regex" }}{{ $regex = .Value }}{{ $regexMsg = .Message }}{{ end -}}
+{{- if eq .Kind "min_value" }}{{ $minVal = .Value }}{{ $minValMsg = .Message }}{{ end -}}
+{{- if eq .Kind "max_value" }}{{ $maxVal = .Value }}{{ $maxValMsg = .Message }}{{ end -}}
 {{- end -}}
-
-{{- /* numericRangeAttribute emits [Range(min, max)] for numeric fields that declare
-     min/max/gte/lt/lte/gt bounds. `gt`/`lt` (exclusive) are approximated as the
-     inclusive bound since System.ComponentModel.DataAnnotations [Range] is inclusive.
-     Only emitted when at least one explicit bound is present (so unconstrained
-     numerics don't get a no-op [Range(int.MinValue, int.MaxValue)]).
-     Context: IRField. */ -}}
-{{- define "numericRangeAttribute" -}}
-{{- if or (eq .DatabaseType "int") (eq .DatabaseType "bigint") (eq .DatabaseType "float") (eq .DatabaseType "decimal") -}}
-{{- $minExpr := .ValidationValue "min" -}}
-{{- if not $minExpr }}{{ $minExpr = .ValidationValue "gte" }}{{ end -}}
-{{- if not $minExpr }}{{ $minExpr = .ValidationValue "gt" }}{{ end -}}
-{{- $maxExpr := .ValidationValue "max" -}}
-{{- if not $maxExpr }}{{ $maxExpr = .ValidationValue "lte" }}{{ end -}}
-{{- if not $maxExpr }}{{ $maxExpr = .ValidationValue "lt" }}{{ end -}}
-{{- if and $minExpr $maxExpr }}
-    [Range({{ $minExpr }}, {{ $maxExpr }})]
-{{- else if $minExpr }}
-{{- if eq .DatabaseType "int" }}
-    [Range({{ $minExpr }}, int.MaxValue)]
-{{- else if eq .DatabaseType "bigint" }}
-    [Range({{ $minExpr }}, long.MaxValue)]
-{{- else if eq .DatabaseType "float" }}
-    [Range({{ $minExpr }}, double.MaxValue)]
-{{- else if eq .DatabaseType "decimal" }}
-    [Range({{ $minExpr }}, double.MaxValue)]
+{{- if and $isRequired (not $field.IsJson) }}
+    [Required(ErrorMessage = "{{ $reqMsg }}")]
 {{- end }}
-{{- else if $maxExpr }}
-{{- if eq .DatabaseType "int" }}
-    [Range(int.MinValue, {{ $maxExpr }})]
-{{- else if eq .DatabaseType "bigint" }}
-    [Range(long.MinValue, {{ $maxExpr }})]
-{{- else if eq .DatabaseType "float" }}
-    [Range(double.MinValue, {{ $maxExpr }})]
-{{- else if eq .DatabaseType "decimal" }}
-    [Range(double.MinValue, {{ $maxExpr }})]
+{{- if $isEmail }}
+    [EmailAddress(ErrorMessage = "{{ $emailMsg }}")]
 {{- end }}
+{{- if $isUrl }}
+    [Url(ErrorMessage = "{{ $urlMsg }}")]
+{{- end }}
+{{- if and $regex (ne $regex "^") }}
+    [RegularExpression("{{ $regex }}", ErrorMessage = "{{ $regexMsg }}")]
+{{- end }}
+{{- if and $minLen $maxLen }}
+    [StringLength({{ $maxLen }}, MinimumLength = {{ $minLen }}, ErrorMessage = "must be between {{ $minLen }} and {{ $maxLen }} characters")]
+{{- else if $maxLen }}
+    [StringLength({{ $maxLen }}, ErrorMessage = "{{ $maxLenMsg }}")]
+{{- else if $minLen }}
+    [StringLength(int.MaxValue, MinimumLength = {{ $minLen }}, ErrorMessage = "{{ $minLenMsg }}")]
+{{- end }}
+{{- if and $minVal $maxVal }}
+    [Range({{ $minVal }}, {{ $maxVal }}, ErrorMessage = "must be between {{ $minVal }} and {{ $maxVal }}")]
+{{- else if $minVal }}
+{{- if $field.IsBigInt }}
+    [Range({{ $minVal }}, long.MaxValue, ErrorMessage = "{{ $minValMsg }}")]
+{{- else if $field.IsFloat }}
+    [Range({{ $minVal }}, double.MaxValue, ErrorMessage = "{{ $minValMsg }}")]
+{{- else }}
+    [Range({{ $minVal }}, int.MaxValue, ErrorMessage = "{{ $minValMsg }}")]
+{{- end }}
+{{- else if $maxVal }}
+{{- if $field.IsBigInt }}
+    [Range(long.MinValue, {{ $maxVal }}, ErrorMessage = "{{ $maxValMsg }}")]
+{{- else if $field.IsFloat }}
+    [Range(double.MinValue, {{ $maxVal }}, ErrorMessage = "{{ $maxValMsg }}")]
+{{- else }}
+    [Range(int.MinValue, {{ $maxVal }}, ErrorMessage = "{{ $maxValMsg }}")]
 {{- end }}
 {{- end }}
 {{- end -}}
@@ -228,7 +203,10 @@ Enum.Parse<{{ $csType }}>({{ $value | pascalcase | jsonValue }})
 {{/* ===== Test helpers: shared by the split tests/*.cs.tmpl templates ===== */}}
 
 {{- /* testFieldValue emits a single C# object-initializer line for one field.
-     Context: IRField. Relations map onto the FK-named entity property. */ -}}
+     Context: IRField. Relations map onto the FK-named entity property. Scalar
+     literal syntax (Guid.NewGuid, 1L, 1.0m, DateTime.UtcNow, new List<...>) is
+     loaded from type_mappings.yaml; this template keeps only the test-specific
+     value choices (email/url/name strings, relation FK lookups). */ -}}
 {{- define "testFieldValue" }}
 {{- if .IsRelation }}
 {{- if .IsNullable }}
@@ -236,62 +214,59 @@ Enum.Parse<{{ $csType }}>({{ $value | pascalcase | jsonValue }})
 {{- else }}
             {{ fkName .Name | pascalcase }} = _createdIds.TryGetValue("{{ .RelationTarget }}", out var {{ fkName .Name | camelcase }}Pk) ? ({{ languageType .DatabaseType false }})({{ fkName .Name | camelcase }}Pk) : default,
 {{- end }}
-{{- else if eq .DatabaseType "uuid" }}
-            {{ .Name | pascalcase }} = Guid.NewGuid(),
-{{- else if or (eq .DatabaseType "string") (eq .DatabaseType "text") }}
+{{- else if .IsUuid }}
+            {{ .Name | pascalcase }} = {{ literalDefault .DatabaseType }},
+{{- else if .IsText }}
 {{- if .HasValidation "email" }}
             {{ .Name | pascalcase }} = "test@example.com",
 {{- else if .HasValidation "url" }}
             {{ .Name | pascalcase }} = "https://example.com",
 {{- else if .DefaultValue }}
-            {{ .Name | pascalcase }} = "{{ .DefaultValue }}",
+            {{ .Name | pascalcase }} = {{ literalValue .DatabaseType .DefaultValue }},
 {{- else }}
             {{ .Name | pascalcase }} = "test_{{ .Name | lowercase }}",
 {{- end }}
-{{- else if eq .DatabaseType "int" }}
-            {{ .Name | pascalcase }} = 1,
-{{- else if eq .DatabaseType "bigint" }}
-            {{ .Name | pascalcase }} = 1L,
-{{- else if eq .DatabaseType "float" }}
-            {{ .Name | pascalcase }} = 1.0,
-{{- else if eq .DatabaseType "boolean" }}
-            {{ .Name | pascalcase }} = true,
-{{- else if eq .DatabaseType "decimal" }}
-            {{ .Name | pascalcase }} = 1.0m,
-{{- else if or (eq .DatabaseType "datetime") (eq .DatabaseType "date") }}
-            {{ .Name | pascalcase }} = DateTime.UtcNow,
-{{- else if hasPrefix "array(" .DatabaseType }}
-{{- $inner := enumTypeName .DatabaseType }}
-{{- if isEnumType $inner }}
-            {{ .Name | pascalcase }} = new List<{{ $inner }}>(),
-{{- else if eq $inner "string" }}
+{{- else if .IsInteger }}
+            {{ .Name | pascalcase }} = {{ literalValue .DatabaseType "1" }},
+{{- else if .IsFloat }}
+            {{ .Name | pascalcase }} = {{ literalValue .DatabaseType "1.0" }},
+{{- else if .IsBoolean }}
+            {{ .Name | pascalcase }} = {{ literalValue .DatabaseType "true" }},
+{{- else if or .IsDateTime .IsDate }}
+            {{ .Name | pascalcase }} = {{ literalDefault .DatabaseType }},
+{{- else if .IsArray }}
+{{- $inner := .ArrayElementType }}
+{{- $kind := seedKind $inner }}
+{{- if .IsEnum }}
+            {{ .Name | pascalcase }} = {{ literalDefault .DatabaseType }},
+{{- else if eq $kind "text" }}
 {{- if .HasValidation "email" }}
-            {{ .Name | pascalcase }} = new List<string> { "test@example.com" },
+            {{ .Name | pascalcase }} = {{ arrayLiteralOpen .DatabaseType }} "test@example.com" {{ arrayLiteralClose }},
 {{- else if .HasValidation "url" }}
-            {{ .Name | pascalcase }} = new List<string> { "https://example.com" },
+            {{ .Name | pascalcase }} = {{ arrayLiteralOpen .DatabaseType }} "https://example.com" {{ arrayLiteralClose }},
 {{- else }}
-            {{ .Name | pascalcase }} = new List<string> { "test_{{ .Name | lowercase }}" },
+            {{ .Name | pascalcase }} = {{ arrayLiteralOpen .DatabaseType }} "test_{{ .Name | lowercase }}" {{ arrayLiteralClose }},
 {{- end }}
-{{- else if eq $inner "uuid" }}
-            {{ .Name | pascalcase }} = new List<Guid> { Guid.NewGuid() },
-{{- else if eq $inner "int" }}
-            {{ .Name | pascalcase }} = new List<int> { 1 },
-{{- else if eq $inner "bigint" }}
-            {{ .Name | pascalcase }} = new List<long> { 1L },
-{{- else if eq $inner "float" }}
-            {{ .Name | pascalcase }} = new List<double> { 1.0 },
-{{- else if eq $inner "decimal" }}
-            {{ .Name | pascalcase }} = new List<decimal> { 1.0m },
-{{- else if or (eq $inner "datetime") (eq $inner "date") }}
-            {{ .Name | pascalcase }} = new List<DateTime> { DateTime.UtcNow },
-{{- else if eq $inner "boolean" }}
-            {{ .Name | pascalcase }} = new List<bool> { true },
+{{- else if eq $kind "uuid" }}
+            {{ .Name | pascalcase }} = {{ arrayLiteralOpen .DatabaseType }} {{ literalDefault $inner }} {{ arrayLiteralClose }},
+{{- else if eq $kind "int" }}
+            {{ .Name | pascalcase }} = {{ arrayLiteralOpen .DatabaseType }} {{ literalValue $inner "1" }} {{ arrayLiteralClose }},
+{{- else if eq $kind "bigint" }}
+            {{ .Name | pascalcase }} = {{ arrayLiteralOpen .DatabaseType }} {{ literalValue $inner "1" }} {{ arrayLiteralClose }},
+{{- else if eq $kind "float" }}
+            {{ .Name | pascalcase }} = {{ arrayLiteralOpen .DatabaseType }} {{ literalValue $inner "1.0" }} {{ arrayLiteralClose }},
+{{- else if eq $kind "decimal" }}
+            {{ .Name | pascalcase }} = {{ arrayLiteralOpen .DatabaseType }} {{ literalValue $inner "1.0" }} {{ arrayLiteralClose }},
+{{- else if or (eq $kind "datetime") (eq $kind "date") }}
+            {{ .Name | pascalcase }} = {{ arrayLiteralOpen .DatabaseType }} {{ literalDefault $inner }} {{ arrayLiteralClose }},
+{{- else if eq $kind "bool" }}
+            {{ .Name | pascalcase }} = {{ arrayLiteralOpen .DatabaseType }} {{ literalValue $inner "true" }} {{ arrayLiteralClose }},
 {{- end }}
-{{- else if isEnumType .DatabaseType }}
+{{- else if .IsEnum }}
 {{- if .DefaultValue }}
-            {{ .Name | pascalcase }} = {{ enumTypeName .DatabaseType }}.{{ .DefaultValue | pascalcase }},
+            {{ .Name | pascalcase }} = {{ literalMember .DatabaseType .DefaultValue }},
 {{- else }}
-            {{ .Name | pascalcase }} = ({{ enumTypeName .DatabaseType }})0,
+            {{ .Name | pascalcase }} = {{ literalDefault .DatabaseType }},
 {{- end }}
 {{- end }}
 {{- end }}
@@ -304,7 +279,7 @@ Enum.Parse<{{ $csType }}>({{ $value | pascalcase | jsonValue }})
 {{- define "testAuthEntityFields" }}
 {{- range .Fields }}
 {{- $n := .Name | lower }}
-{{- if and (not .IsPrimary) (not .IsMany) (not .IsRelation) (not (isFeatureField .Name)) (ne $n "email") (ne $n "password") (ne $n "role") }}
+{{- if and (not .IsPrimary) (not .IsMany) (not .IsRelation) (not (.IsFeatureField)) (ne $n "email") (ne $n "password") (ne $n "role") }}
 {{- template "testFieldValue" . }}
 {{- end }}
 {{- end }}
@@ -323,7 +298,7 @@ Enum.Parse<{{ $csType }}>({{ $value | pascalcase | jsonValue }})
 {{- $authPk := .AuthPk }}
 {{- $suffix := default "" .Suffix }}
 {{- range $e.Fields }}
-{{- if and (not .IsPrimary) (not .IsMany) (not (isFeatureField .Name)) (not .IsNullable) (not .IsReadonly) }}
+{{- if and (not .IsPrimary) (not .IsMany) (not (.IsFeatureField)) (not .IsNullable) (not .IsReadonly) }}
 {{- if .IsRelation }}
 {{- if eq .RelationTarget $authName }}
             {{ .Name | pascalcase }} = ownerUser.{{ $authPk }},
@@ -342,7 +317,7 @@ Enum.Parse<{{ $csType }}>({{ $value | pascalcase | jsonValue }})
 {{- define "testRequestBody" }}
 {{- range .Fields }}
 {{- if and (not .IsPrimary) (not .IsMany) }}
-{{- if not (isFeatureField .Name) }}
+{{- if not (.IsFeatureField) }}
 {{- template "testFieldValue" . }}
 {{- end }}
 {{- end }}
@@ -358,7 +333,7 @@ Enum.Parse<{{ $csType }}>({{ $value | pascalcase | jsonValue }})
 {{- $suffix := default "" .Suffix }}
 {{- range $entity.Fields }}
 {{- if and (not .IsPrimary) (not .IsMany) }}
-{{- if not (isFeatureField .Name) }}
+{{- if not (.IsFeatureField) }}
 {{- if .IsRelation }}
 {{- if .IsNullable }}
             {{ .Name | pascalcase }} = _createdIds.TryGetValue("{{ .RelationTarget }}", out var {{ .Name | camelcase }}{{ $suffix }}Pk) ? ({{ languageType .DatabaseType true }})({{ .Name | camelcase }}{{ $suffix }}Pk) : null,

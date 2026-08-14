@@ -4,10 +4,8 @@
  * Make model changes in domain.yaml; this file is overwritten.
  * </auto-generated>
  */
-using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using {{ .Project.Name | pascalcase }}.Domain.Entities;
 
 namespace {{ .Project.Name | pascalcase }}.Infrastructure.Persistence.Configurations;
@@ -20,22 +18,22 @@ public class {{ .Entity.Name }}Configuration : IEntityTypeConfiguration<{{ .Enti
     public void Configure(EntityTypeBuilder<{{ .Entity.Name }}> builder)
     {
         // Table
-        builder.ToTable("{{ .Entity.NamePlural | snakecase }}");
+        builder.ToTable("{{ .Entity.TableName }}");
 
         // Primary Key
 {{- range .Entity.Fields }}
 {{- if .IsPrimary }}
         builder.HasKey(e => e.{{ .Name | pascalcase }});
-        builder.Property(e => e.{{ .Name | pascalcase }}).HasColumnName("{{ .Name | snakecase }}");
+        builder.Property(e => e.{{ .Name | pascalcase }}).HasColumnName("{{ .DatabaseColumnName }}");
 {{- end }}
 {{- end }}
 
         // Properties
 {{- range .Entity.Fields }}
-{{- if and (not .IsRelation) (not .IsPrimary) (not (isFeatureField .Name)) }}
-{{- $colName := .Name | snakecase }}
+{{- if and (not .IsRelation) (not .IsPrimary) (not (.IsFeatureField)) }}
+{{- $colName := .DatabaseColumnName }}
 {{- $propName := .Name | pascalcase }}
-{{- if isEnumType .DatabaseType }}
+{{- if .IsEnum }}
         builder.Property(e => e.{{ $propName }})
             .HasColumnName("{{ $colName }}")
             .HasConversion<string>()
@@ -43,18 +41,16 @@ public class {{ .Entity.Name }}Configuration : IEntityTypeConfiguration<{{ .Enti
 {{- if not .IsNullable }}
             .IsRequired()
 {{- end }};
-{{- else if or (eq .DatabaseType "json") (eq .DatabaseType "jsonb") }}
+{{- else if .IsJson }}
+        // Map to a real json/jsonb column so JSON path filters (spec/query.md)
+        // translate to PostgreSQL -> / ->> operators. Npgsql maps JsonDocument
+        // directly; the column type is explicit so json vs jsonb is preserved.
         builder.Property(e => e.{{ $propName }})
             .HasColumnName("{{ $colName }}")
-            .HasConversion(
-                new ValueConverter<JsonDocument?, string>(
-                    v => v == null ? null : v.RootElement.GetRawText(),
-                    v => v == null ? null : JsonDocument.Parse(v, default)
-                )
-            );
-{{- else if eq .DatabaseType "string" }}
+            .HasColumnType("{{ .DatabaseType }}");
+{{- else if .IsText }}
 {{- $maxLen := "" }}
-{{- if .HasValidation "max" }}
+{{- if and .IsString (.HasValidation "max") }}
 {{- $maxLen = .ValidationValue "max" }}
 {{- end }}
         builder.Property(e => e.{{ $propName }})
@@ -65,27 +61,20 @@ public class {{ .Entity.Name }}Configuration : IEntityTypeConfiguration<{{ .Enti
 {{- if not .IsNullable }}
             .IsRequired()
 {{- end }};
-{{- else if eq .DatabaseType "text" }}
-        builder.Property(e => e.{{ $propName }})
-            .HasColumnName("{{ $colName }}")
-{{- if not .IsNullable }}
-            .IsRequired()
-{{- end }};
 {{- else }}
         builder.Property(e => e.{{ $propName }})
             .HasColumnName("{{ $colName }}");
-{{- end }}
-{{- if .IsUnique }}
-        builder.HasIndex(e => e.{{ $propName }}).IsUnique();
 {{- end }}
 {{- end }}
 {{- end }}
 
         // Indexes
-{{- range .Entity.Indexes }}
+        // The CORE computes the complete index list (declared indexes plus one
+        // implicit unique index per `unique: true` field) — see AllIndexes().
+{{- range .Entity.AllIndexes }}
         builder
             .HasIndex(e => new { {{- range $i, $field := .Fields }}{{ if $i }}, {{ end }}e.{{ $field | pascalcase }}{{- end }} })
-            .HasDatabaseName("IX_{{ .Name | snakecase }}")
+            .HasDatabaseName("{{ .DatabaseName }}")
 {{- if .Unique }}
             .IsUnique()
 {{- end }};
@@ -97,7 +86,7 @@ public class {{ .Entity.Name }}Configuration : IEntityTypeConfiguration<{{ .Enti
         // {{ .FieldName }} -> {{ .TargetEntity.Name }}
 {{- $navName := .NavigationName | pascalcase }}
 {{- $fkName := fkName .FieldName | pascalcase }}
-{{- $fkColName := fkName .FieldName | snakecase }}
+{{- $fkColName := .ForeignKeyColumnName }}
         builder
             .HasOne(e => e.{{ $navName }})
             .WithMany(e => e.{{ .InverseNavName | pascalcase }})

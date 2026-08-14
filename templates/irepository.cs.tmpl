@@ -7,6 +7,7 @@
 {{- $proj := .Project.Name | pascalcase }}
 using {{ $proj }}.Domain.Entities;
 using {{ $proj }}.Domain.Shared;
+using {{ $proj }}.Application.Query;
 
 namespace {{ $proj }}.Application.Repositories;
 
@@ -16,11 +17,9 @@ namespace {{ $proj }}.Application.Repositories;
 public interface I{{ .Entity.Name }}Repository : IRepository<{{ .Entity.Name }}>
 {
     /// <summary>
-    /// Get a page of {{ .Entity.NamePlural | lowercase }}.
-    /// <paramref name="sort"/> uses "field" or "-field" (e.g. "-price"); the
-    /// scalar properties scanned at generation time are valid sort keys.
-    /// <paramref name="search"/> does a case-insensitive contains match across
-    /// the entity's string fields.
+    /// Get a page of {{ .Entity.NamePlural | lowercase }} per the normalized
+    /// <see cref="ListQuery"/>: search/filter/sort strings plus clamped
+    /// pagination — the runtime mirror of the core's IRQuery (spec/query.md).
     /// </summary>
-    Task<PagedResult<{{ .Entity.Name }}>> GetPagedAsync(int page, int pageSize, string? sort = null, string? search = null, CancellationToken cancellationToken = default);
+    Task<PagedResult<{{ .Entity.Name }}>> GetPagedAsync(ListQuery query, CancellationToken cancellationToken = default);
 }

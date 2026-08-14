@@ -9,6 +9,7 @@ using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using {{ $proj }}.Domain.Entities;
 using {{ $proj }}.Domain.Shared;
+using {{ $proj }}.Application.Query;
 using {{ $proj }}.Application.Repositories;
 using {{ $proj }}.Infrastructure.Persistence;
 
@@ -31,8 +32,8 @@ public class {{ .Entity.Name }}Repository : I{{ .Entity.Name }}Repository
     public async Task<List<{{ .Entity.Name }}>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var query = _dbSet.AsNoTracking();
-{{- range .Entity.RelationsOut }}
-        query = query.Include(e => e.{{ if .IsMany }}{{ .FieldName | pascalcase }}{{ else }}{{ .NavigationName }}{{ end }});
+{{- range .Entity.EagerLoadRelations }}
+        query = query.Include(e => e.{{ .EagerLoadNavigation | pascalcase }});
 {{- end }}
         return await query.ToListAsync(cancellationToken);
     }
@@ -40,8 +41,8 @@ public class {{ .Entity.Name }}Repository : I{{ .Entity.Name }}Repository
     public async Task<{{ .Entity.Name }}?> GetByIdAsync(object id, CancellationToken cancellationToken = default)
     {
         var query = _dbSet.AsQueryable();
-{{- range .Entity.RelationsOut }}
-        query = query.Include(e => e.{{ if .IsMany }}{{ .FieldName | pascalcase }}{{ else }}{{ .NavigationName }}{{ end }});
+{{- range .Entity.EagerLoadRelations }}
+        query = query.Include(e => e.{{ .EagerLoadNavigation | pascalcase }});
 {{- end }}
         return await query.FirstOrDefaultAsync(e => e.{{ .PrimaryKey.Name | pascalcase }} == ({{ languageType .PrimaryKey.DatabaseType false }})id, cancellationToken);
     }
@@ -52,61 +53,117 @@ public class {{ .Entity.Name }}Repository : I{{ .Entity.Name }}Repository
             .FirstOrDefaultAsync(e => e.{{ .PrimaryKey.Name | pascalcase }} == ({{ languageType .PrimaryKey.DatabaseType false }})id, cancellationToken);
     }
 
-    public async Task<PagedResult<{{ .Entity.Name }}>> GetPagedAsync(int page, int pageSize, string? sort = null, string? search = null, CancellationToken cancellationToken = default)
+{{- $q := .QuerySchema }}
+    private static readonly IReadOnlyDictionary<string, FilterOperator[]> _filterableFields = new Dictionary<string, FilterOperator[]>(StringComparer.OrdinalIgnoreCase)
     {
-        page = Math.Max(1, page);
-        pageSize = Math.Clamp(pageSize, 1, {{ .Project.Pagination.MaxPageSize }});
+{{- range $q.Filterable }}
+{{- if ne .Kind "json" }}
+        ["{{ .Path }}"] = new[] { {{ range $i, $op := .Operators }}{{ if $i }}, {{ end }}FilterOperator.{{ $op | pascalcase }}{{ end }} },
+{{- end }}
+{{- end }}
+    };
 
-        var query = _dbSet.AsNoTracking();
-{{- range .Entity.RelationsOut }}
-        query = query.Include(e => e.{{ if .IsMany }}{{ .FieldName | pascalcase }}{{ else }}{{ .NavigationName }}{{ end }});
+    // JSON roots, keyed by field name → allowed operators. jsonb carries the full
+    // set (ordered operators are numeric); json carries text-only operators. A
+    // "root.key[.key...]" path resolves against its root's operator set.
+    private static readonly IReadOnlyDictionary<string, FilterOperator[]> _jsonFilterRoots = new Dictionary<string, FilterOperator[]>(StringComparer.OrdinalIgnoreCase)
+    {
+{{- range $q.Filterable }}
+{{- if eq .Kind "json" }}
+        ["{{ .Path }}"] = new[] { {{ range $i, $op := .Operators }}{{ if $i }}, {{ end }}FilterOperator.{{ $op | pascalcase }}{{ end }} },
 {{- end }}
-{{- $strFields := list }}
-{{- range .Entity.Fields }}
-{{- if eq .DatabaseType "string" }}{{ $strFields = append $strFields .Name }}{{ end }}
 {{- end }}
-{{- if gt (len $strFields) 0 }}
-        if (!string.IsNullOrEmpty(search))
+    };
+
+    // Sortable fields, keyed by their camelCase wire name -> PascalCase property
+    // name (the core's SortableFields(), serialized for the runtime sort parser).
+    private static readonly IReadOnlyDictionary<string, string> _sortableFields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+{{- range $q.Sortable }}
+        ["{{ .Name | camelcase }}"] = "{{ .Name | pascalcase }}",
+{{- end }}
+    };
+
+    public async Task<PagedResult<{{ .Entity.Name }}>> GetPagedAsync(ListQuery query, CancellationToken cancellationToken = default)
+    {
+        var source = _dbSet.AsNoTracking();
+{{- range .Entity.EagerLoadRelations }}
+{{- if .IsMany }}
+        if (query.ShouldInclude("{{ .FieldName | camelcase }}"))
         {
-            query = query.Where(e => {{ range $i, $f := $strFields }}{{ if $i }} || {{ end }}e.{{ $f | pascalcase }}.Contains(search){{- end }});
+            source = source.Include(e => e.{{ .EagerLoadNavigation | pascalcase }});
         }
-{{- end }}
-
-        if (!string.IsNullOrEmpty(sort))
-        {
-            IOrderedQueryable<{{ .Entity.Name }}> ordered;
-            switch (sort)
-            {
-{{- range .Entity.Fields }}
-{{- if isFeatureField .Name }}
-{{- else if .IsPrimary }}
-{{- else if .IsRelation }}
-{{- else if (isEnumType .DatabaseType) }}
-{{- else if .IsArray }}
-{{- else if eq .DatabaseType "json" }}
-{{- else if eq .DatabaseType "jsonb" }}
 {{- else }}
-                case "{{ .Name | camelcase }}": ordered = query.OrderBy(e => e.{{ .Name | pascalcase }}); break;
-                case "-{{ .Name | camelcase }}": ordered = query.OrderByDescending(e => e.{{ .Name | pascalcase }}); break;
+        source = source.Include(e => e.{{ .EagerLoadNavigation | pascalcase }});
 {{- end }}
 {{- end }}
-                default: ordered = query.OrderBy(e => e.{{ .PrimaryKey.Name | pascalcase }}); break;
+{{- if $q.Searchable }}
+        if (!string.IsNullOrEmpty(query.Search))
+        {
+            // Free-text search is OR(Contains) over the core's SearchableFields().
+            var searchNode = FilterNode.Or({{ range $i, $f := $q.Searchable }}{{ if $i }}, {{ end }}FilterNode.Compare("{{ $f.Name | pascalcase }}", FilterOperator.Contains, query.Search){{ end }});
+            source = source.Where(FilterExpression.Build<{{ .Entity.Name }}>(searchNode));
+        }
+{{- end }}
+
+        if (!string.IsNullOrEmpty(query.Filter))
+        {
+            // The core owns the filter grammar (spec/query.md); this bridge parses
+            // and validates against _filterableFields (+ JSON roots), then serializes
+            // the AST to LINQ. Invalid filters throw FormatException (mapped to 400 upstream).
+            var filterNode = FilterParser.Parse(query.Filter, _filterableFields, _jsonFilterRoots);
+            if (filterNode != null)
+            {
+                source = source.Where(FilterExpression.Build<{{ .Entity.Name }}>(filterNode));
             }
-            query = ordered;
         }
 
-        var totalCount = await query.CountAsync(cancellationToken);
-        var items = await query
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
+{{- if .CursorField }}
+        if (query.HasCursor)
+        {
+            // Keyset pagination on the integer primary key (stable under inserts, no
+            // offset drift). `sort` is ignored in cursor mode — order is by PK.
+            var cursorValue = {{ if .CursorField.IsBigInt }}long.Parse(query.Cursor!){{ else }}int.Parse(query.Cursor!){{ end }};
+            var total = await source.CountAsync(cancellationToken);
+            var page = await source
+                .Where(e => e.{{ .CursorField.Name | pascalcase }} > cursorValue)
+                .OrderBy(e => e.{{ .CursorField.Name | pascalcase }})
+                .Take(query.PageSize + 1)
+                .ToListAsync(cancellationToken);
+            var hasMore = page.Count > query.PageSize;
+            if (hasMore) { page = page.Take(query.PageSize).ToList(); }
+            return new PagedResult<{{ .Entity.Name }}>
+            {
+                Items = page,
+                TotalCount = total,
+                Page = query.Page,
+                PageSize = query.PageSize,
+                NextCursor = hasMore && page.Count > 0 ? page[^1].{{ .CursorField.Name | pascalcase }}.ToString() : null
+            };
+        }
+{{- end }}
+
+        if (!string.IsNullOrEmpty(query.Sort))
+        {
+            // The core owns the sort grammar (spec/query.md); parse and validate
+            // against _sortableFields, then apply multi-key ordering. Unknown keys
+            // throw FormatException (mapped to 400 upstream, never 500).
+            var sortKeys = SortParser.Parse(query.Sort, _sortableFields);
+            source = SortApplier.Apply(source, sortKeys);
+        }
+
+        var totalCount = await source.CountAsync(cancellationToken);
+        var items = await source
+            .Skip((query.Page - 1) * query.PageSize)
+            .Take(query.PageSize)
             .ToListAsync(cancellationToken);
 
         return new PagedResult<{{ .Entity.Name }}>
         {
             Items = items,
             TotalCount = totalCount,
-            Page = page,
-            PageSize = pageSize
+            Page = query.Page,
+            PageSize = query.PageSize
         };
     }
 

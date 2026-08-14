@@ -42,7 +42,7 @@ merged partial class.
 {{- range .Project.Entities }}
 ### {{ .Name }}
 - **Plural:** {{ .NamePlural }}
-- **Table:** `{{ .NamePlural | snakecase }}`
+- **Table:** `{{ .TableName }}`
 - **Fields:** {{ len .Fields }}
 - **Features:** {{ if .HasAudit }}Audit{{ end }}{{ if .HasSoftDelete }}{{ if .HasAudit }}, {{ end }}Soft Delete{{ end }}{{ if .HasOptimisticLock }}{{ if or .HasAudit .HasSoftDelete }}, {{ end }}Optimistic Lock{{ end }}
 - **Seed Records:** {{ len .Seed }}

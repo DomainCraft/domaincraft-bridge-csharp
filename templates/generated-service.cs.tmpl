@@ -4,6 +4,7 @@
 using {{ $proj }}.Application.Caching;
 using {{ $proj }}.Application.Events;
 using {{ $proj }}.Application.Repositories;
+using {{ $proj }}.Application.Query;
 using {{ $proj }}.Application.Services;
 using {{ $proj }}.Domain.Entities;
 using {{ $proj }}.Domain.Shared;
@@ -116,9 +117,9 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
         return await _repository.GetAllAsync(cancellationToken);
     }
 
-    public async Task<PagedResult<{{ .Entity.Name }}>> GetPagedAsync(int page, int pageSize, string? sort = null, string? search = null, CancellationToken cancellationToken = default)
+    public async Task<PagedResult<{{ .Entity.Name }}>> GetPagedAsync(ListQuery query, CancellationToken cancellationToken = default)
     {
-        return await _repository.GetPagedAsync(page, pageSize, sort, search, cancellationToken);
+        return await _repository.GetPagedAsync(query, cancellationToken);
     }
 
     public async Task<{{ .Entity.Name }}?> GetByIdAsync(object id, CancellationToken cancellationToken = default)
