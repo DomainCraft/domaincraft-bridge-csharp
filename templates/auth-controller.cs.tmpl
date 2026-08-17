@@ -137,7 +137,7 @@ public class {{ $authType }}Controller : ControllerBase
     private string GenerateJwtToken({{ $proj }}.Domain.Entities.{{ $authType }} entity)
     {
         var secret = _configuration["Jwt:Secret"] ?? throw new InvalidOperationException("JWT secret not configured");
-        var key = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(secret));
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
         var id = entity.{{ $authPk }}.ToString() ?? "";

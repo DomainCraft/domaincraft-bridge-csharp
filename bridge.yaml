@@ -1,6 +1,6 @@
 name: csharp-restful
 description: C# REST API bridge for DomainCraft (EF Core + PostgreSQL + JWT)
-version: "1.2.0"
+version: "1.3.0"
 output_dir: generated
 helpers: templates/_helpers.cs.tmpl
 
@@ -177,7 +177,7 @@ templates:
 
   - for: project
     source: templates/service-registration.cs.tmpl
-    target: "src/Application/DependencyInjection.cs"
+    target: "src/Application/DependencyInjection.g.cs"
 
   # ===== AUTH SERVICE (Generation Gap: Core + Custom) =====
   # The auth flow (login/register/me) lives in an IAuthService port so the auth

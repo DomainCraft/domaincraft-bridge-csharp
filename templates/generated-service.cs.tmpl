@@ -156,7 +156,7 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
 
         await OnAfterCreateAsync(entity, cancellationToken);
 {{- if .HasCacheable }}
-        await _cache.RemoveByPrefixAsync("{{ .Entity.Name }}:by-id:", cancellationToken);
+        await _cache.RemoveAsync("{{ .Entity.Name }}:by-id:" + entity.{{ .PrimaryKey.Name | pascalcase }}, cancellationToken);
 {{- end }}
 {{- if .HasEventSourced }}
         if (!overrideResult.IsHandled)
@@ -169,8 +169,7 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
 
     public async Task<{{ .Entity.Name }}?> UpdateAsync(object id, {{ .Entity.Name }} entity, CancellationToken cancellationToken = default)
     {
-        var existing = await _repository.GetByIdAsync(id, cancellationToken);
-        if (existing == null)
+        if (!await _repository.AnyAsync(e => e.{{ .PrimaryKey.Name | pascalcase }} == ({{ languageType .PrimaryKey.DatabaseType false }})id, cancellationToken))
         {
             return null;
         }
@@ -194,7 +193,7 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
 
         await OnAfterUpdateAsync(entity, cancellationToken);
 {{- if .HasCacheable }}
-        await _cache.RemoveByPrefixAsync("{{ .Entity.Name }}:by-id:", cancellationToken);
+        await _cache.RemoveAsync("{{ .Entity.Name }}:by-id:" + id, cancellationToken);
 {{- end }}
 {{- if .HasEventSourced }}
         if (!overrideResult.IsHandled)
@@ -207,8 +206,7 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
 
     public async Task<{{ .Entity.Name }}?> UpdatePartialAsync(object id, {{ .Entity.Name }} entity, CancellationToken cancellationToken = default)
     {
-        var existing = await _repository.GetByIdAsync(id, cancellationToken);
-        if (existing == null)
+        if (!await _repository.AnyAsync(e => e.{{ .PrimaryKey.Name | pascalcase }} == ({{ languageType .PrimaryKey.DatabaseType false }})id, cancellationToken))
         {
             return null;
         }
@@ -239,7 +237,7 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
 
         await OnAfterUpdateAsync(entity, cancellationToken);
 {{- if .HasCacheable }}
-        await _cache.RemoveByPrefixAsync("{{ .Entity.Name }}:by-id:", cancellationToken);
+        await _cache.RemoveAsync("{{ .Entity.Name }}:by-id:" + id, cancellationToken);
 {{- end }}
         return entity;
     }
@@ -269,7 +267,7 @@ public partial class {{ .Entity.Name }}Service : I{{ .Entity.Name }}Service
 
         await OnAfterDeleteAsync(existing, cancellationToken);
 {{- if .HasCacheable }}
-        await _cache.RemoveByPrefixAsync("{{ .Entity.Name }}:by-id:", cancellationToken);
+        await _cache.RemoveAsync("{{ .Entity.Name }}:by-id:" + id, cancellationToken);
 {{- end }}
 {{- if .HasEventSourced }}
         if (!overrideResult.IsHandled)

@@ -87,6 +87,29 @@ public class {{ .Entity.Name }}Repository : I{{ .Entity.Name }}Repository
     public async Task<PagedResult<{{ .Entity.Name }}>> GetPagedAsync(ListQuery query, CancellationToken cancellationToken = default)
     {
         var source = _dbSet.AsNoTracking();
+{{- $authEntity := "" }}
+{{- if .Project.HasAuth }}{{ $authEntity = .Project.Auth.Entity }}{{ end }}
+{{- $ownerFields := list }}
+{{- if .Project.HasAuth }}
+{{- if eq .Entity.Name $authEntity }}
+{{- range .Entity.Fields }}{{ if and .IsPrimary (eq .DatabaseType "uuid") }}{{ $ownerFields = append $ownerFields (.Name | pascalcase) }}{{ end }}{{ end }}
+{{- end }}
+{{- range .Entity.Fields }}{{ if and .IsRelation (not .IsMany) (eq .RelationTarget $authEntity) (eq .DatabaseType "uuid") }}{{ $ownerFields = append $ownerFields (fkName .Name | pascalcase) }}{{ end }}{{ end }}
+{{- range .Entity.Fields }}{{ if and (not .IsRelation) (eq (.Name | lower) "createdby") (eq .DatabaseType "uuid") }}{{ $ownerFields = append $ownerFields (.Name | pascalcase) }}{{ end }}{{ end }}
+{{- end }}
+        if (query.OwnerOnly)
+        {
+            // @Owner read: the ownership filter is pushed into SQL so pagination and
+            // TotalCount stay correct. When the entity has no resolvable owner column
+            // the predicate is always-false — an owner check can only be bypassed by an
+            // explicit role (same semantics as OwnerResolver.IsOwner).
+            var ownerId = query.OwnerId;
+{{- if gt (len $ownerFields) 0 }}
+            source = source.Where(e => {{ range $i, $f := $ownerFields }}{{ if $i }} || {{ end }}e.{{ $f }} == ownerId{{ end }});
+{{- else }}
+            source = source.Where(e => false);
+{{- end }}
+        }
 {{- range .Entity.EagerLoadRelations }}
 {{- if .IsMany }}
         if (query.ShouldInclude("{{ .FieldName | camelcase }}"))

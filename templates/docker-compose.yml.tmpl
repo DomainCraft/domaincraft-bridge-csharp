@@ -5,6 +5,9 @@ services:
     image: postgres:16-alpine
     container_name: {{ .Project.Name | snakecase }}-postgres
     environment:
+      # DEV-ONLY credentials. Override POSTGRES_PASSWORD (and the matching
+      # connection string below) before exposing this compose to any non-local
+      # environment.
       POSTGRES_DB: {{ .Project.Name }}_db
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -30,6 +33,8 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__PostgreSQL=Host=postgres;Database={{ .Project.Name }}_db;Username=postgres;Password=postgres
 {{- if .Project.HasAuth }}
+      # DEV-ONLY JWT secret. The app fails fast at startup unless Jwt__Secret is
+      # at least 32 characters, so this must be overridden for staging/production.
       - Jwt__Secret=YourSuperSecretKeyThatIsAtLeast32CharactersLong!
       - Jwt__Issuer={{ .Project.Name }}
       - Jwt__Audience={{ .Project.Name | snakecase }}-api

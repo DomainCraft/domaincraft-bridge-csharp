@@ -446,6 +446,17 @@ public sealed class ListQuery
     /// <summary>Comma-separated relation field names to eager-load; null = load all.</summary>
     public string? Include { get; init; }
 
+    /// <summary>
+    /// When true, the query is restricted to rows owned by <see cref="OwnerId"/>
+    /// (an @Owner read). The repository turns this into a SQL WHERE over the
+    /// entity's owner columns so pagination and TotalCount stay correct — filtering
+    /// a fetched page in memory would under-fill pages and misreport totals.
+    /// </summary>
+    public bool OwnerOnly { get; set; }
+
+    /// <summary>Current user id for an owner-scoped read. Ignored unless <see cref="OwnerOnly"/> is true.</summary>
+    public Guid OwnerId { get; set; }
+
     /// <summary>True when the caller requested keyset pagination via <see cref="Cursor"/>.</summary>
     public bool HasCursor => !string.IsNullOrEmpty(Cursor);
 

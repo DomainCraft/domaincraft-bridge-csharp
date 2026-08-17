@@ -91,6 +91,24 @@ public class {{ pluralize $entity }}Controller : ControllerBase
         // which relations to eager-load).
         var listQuery = ListQuery.FromQuery(page, pageSize, limit, sort, search, filter, cursor, include, {{ $.Project.Pagination.DefaultPageSize }}, {{ $.Project.Pagination.MaxPageSize }});
         _logger.LogInformation("GET /api/{{ pluralize $entity | lowercase }} - page {Page} size {PageSize}", listQuery.Page, listQuery.PageSize);
+{{- if .Auth }}
+{{- if .Auth.HasOwner }}
+        // @Owner read: without an explicit role, only expose records the caller owns.
+        // The filter is pushed into SQL (ListQuery.OwnerOnly/OwnerId -> repository
+        // WHERE) so pagination and TotalCount stay correct; filtering a fetched page
+        // in memory would under-fill pages and misreport totals.
+{{- if gt (len .Auth.Roles) 0 }}
+        if (!_permissionService.HasAnyRole(new[] { {{- range $i, $r := .Auth.Roles }}{{ if $i }}, {{ end }}"{{ $r }}"{{- end }} }))
+        {
+            listQuery.OwnerOnly = true;
+            listQuery.OwnerId = GetCurrentUserId();
+        }
+{{- else }}
+        listQuery.OwnerOnly = true;
+        listQuery.OwnerId = GetCurrentUserId();
+{{- end }}
+{{- end }}
+{{- end }}
         PagedResult<{{ $entity }}> result;
         try
         {
@@ -111,15 +129,6 @@ public class {{ pluralize $entity }}Controller : ControllerBase
             _logger.LogWarning(ex, "Non-numeric JSON value in an ordered filter for {{ pluralize $entity | lowercase }}");
             return BadRequest(new { code = "INVALID_FILTER", message = "A JSON value compared with an ordered operator is not numeric" });
         }
-{{- if .Auth }}
-{{- if .Auth.HasOwner }}
-        // @Owner read: without an explicit role, only expose records the caller owns.
-        if (!_permissionService.HasAnyRole(new[] { {{- range $i, $r := .Auth.Roles }}{{ if $i }}, {{ end }}"{{ $r }}"{{- end }} }))
-        {
-            result.Items = result.Items.Where(e => _permissionService.IsOwner(e)).ToList();
-        }
-{{- end }}
-{{- end }}
         var dtos = result.Items.Select(MapToDto).ToList();
         return Ok(new PagedResult<{{ $entity }}Dto>
         {

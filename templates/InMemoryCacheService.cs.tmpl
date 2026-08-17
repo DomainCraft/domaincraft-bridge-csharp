@@ -18,6 +18,11 @@ namespace {{ $proj }}.Infrastructure.Caching;
 /// </summary>
 public class InMemoryCacheService : ICacheService
 {
+    // Simple safety bound: this is a dev/single-instance cache, not a distributed
+    // store. Cap the entry count and evict (expired first, then clear-all) so a
+    // long-running process does not grow memory without limit.
+    private const int MaxEntries = 10000;
+
     // key -> (json value, absolute expiry). null expiry = no TTL.
     private readonly ConcurrentDictionary<string, (string? Json, DateTimeOffset? ExpiresAt)> _cache = new();
     private readonly ILogger<InMemoryCacheService> _logger;
@@ -54,6 +59,21 @@ public class InMemoryCacheService : ICacheService
         var json = System.Text.Json.JsonSerializer.Serialize(value);
         var expiry = expiration.HasValue ? (DateTimeOffset?)DateTimeOffset.UtcNow.Add(expiration.Value) : null;
         _cache[key] = (json, expiry?.UtcDateTime);
+
+        if (_cache.Count > MaxEntries)
+        {
+            var now = DateTimeOffset.UtcNow;
+            foreach (var stale in _cache.Keys
+                         .Where(k => _cache[k].ExpiresAt.HasValue && _cache[k].ExpiresAt.Value <= now)
+                         .ToList())
+            {
+                _cache.TryRemove(stale, out _);
+            }
+            if (_cache.Count > MaxEntries)
+            {
+                _cache.Clear();
+            }
+        }
         return Task.CompletedTask;
     }
 

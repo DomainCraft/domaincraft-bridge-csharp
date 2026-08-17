@@ -34,32 +34,19 @@ public class PermissionService : IPermissionService
     {
         if (roles == null) return false;
 
-        // If policies include "*" then treat as public (accessible to everyone, including anonymous)
-        if (roles.Contains("*"))
-        {
-            return true;
-        }
-
+        // `*` and `@Owner` tokens are already decomposed by the core into IsPublic /
+        // HasOwner, so HasAnyRole only ever receives explicit role names.
         var userRoles = _user?.Claims
             .Where(c => c.Type == ClaimTypes.Role || c.Type == "role")
             .Select(c => c.Value)
             .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Direct role match
-        // Note: @Owner tokens are filtered by the caller (controller) and handled
-        // via IPermissionService.IsOwner() separately. HasAnyRole only matches role strings.
         foreach (var role in roles)
         {
             if (userRoles.Contains(role)) return true;
         }
 
         return false;
-    }
-
-    public bool IsInRole(string role)
-    {
-        if (string.IsNullOrWhiteSpace(role)) return false;
-        return _user?.IsInRole(role) ?? false;
     }
 
     public bool IsOwner(object entity)
