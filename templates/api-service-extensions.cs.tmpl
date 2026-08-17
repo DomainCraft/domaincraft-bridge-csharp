@@ -20,6 +20,7 @@ using System.IO.Compression;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
 using {{ .Project.Name | pascalcase }}.Application;
+using {{ .Project.Name | pascalcase }}.Domain.Shared;
 using {{ .Project.Name | pascalcase }}.Infrastructure;
 using {{ .Project.Name | pascalcase }}.Infrastructure.Persistence;
 {{- if $hasSeed }}
@@ -258,7 +259,9 @@ public static class ServiceCollectionExtensions
             .AddJsonOptions(options =>
             {
                 options.JsonSerializerOptions.DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
-                options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+{{- range $enumName := $.Project.EnumOrder }}
+                options.JsonSerializerOptions.Converters.Add(new {{ $enumName | pascalcase }}JsonConverter());
+{{- end }}
             });
 
         // Swagger/OpenAPI — no AddEndpointsApiExplorer: the (later-registered) plain
@@ -371,3 +374,5 @@ public static class ServiceCollectionExtensions
         return builder;
     }
 }
+
+

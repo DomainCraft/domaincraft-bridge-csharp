@@ -5,6 +5,8 @@
  * </auto-generated>
  */
 using System.Runtime.Serialization;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace {{ .Project.Name | pascalcase }}.Domain.Shared;
 
@@ -20,6 +22,37 @@ public enum {{ $enumName | pascalcase }}
     [EnumMember(Value = "{{ .WireValue }}")]
     {{ .Name | pascalcase }} = {{ .Ordinal }},
 {{- end }}
+}
+
+/// <summary>
+/// JSON converter honoring the core-owned snake_case wire value ([EnumMember]).
+/// Read accepts the wire value or the CLR member name (case-insensitive);
+/// write always emits the wire value.
+/// </summary>
+public sealed class {{ $enumName | pascalcase }}JsonConverter : JsonConverter<{{ $enumName | pascalcase }}>
+{
+    public override {{ $enumName | pascalcase }} Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        var text = reader.GetString();
+        return text switch
+        {
+{{- range $enumValues }}
+{{- $wire := .WireValue }}
+{{- $member := .Name | lower }}
+            "{{ $wire }}"{{- if ne $wire $member }} or "{{ $member }}"{{- end }} => {{ $enumName | pascalcase }}.{{ .Name | pascalcase }},
+{{- end }}
+            _ => throw new JsonException($"'{text}' is not a valid {{ $enumName | pascalcase }} value.")
+        };
+    }
+
+    public override void Write(Utf8JsonWriter writer, {{ $enumName | pascalcase }} value, JsonSerializerOptions options)
+        => writer.WriteStringValue(value switch
+        {
+{{- range $enumValues }}
+            {{ $enumName | pascalcase }}.{{ .Name | pascalcase }} => "{{ .WireValue }}",
+{{- end }}
+            _ => value.ToString()
+        });
 }
 
 {{- end }}
